@@ -4,12 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     utils.url = "github:numtide/flake-utils";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    naersk = {
-      url = "github:nix-community/naersk";
+    crane.url = "github:ipetkov/crane";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -19,22 +16,30 @@
       self,
       nixpkgs,
       utils,
-      fenix,
-      naersk,
+      crane,
+      rust-overlay,
     }:
     utils.lib.eachDefaultSystem (
       system:
       let
-        appName = "stoopid-short";
-        pkgs = nixpkgs.legacyPackages.${system};
-        rust = fenix.packages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
+
+        craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+        craneCommonArgs = {
+          src = craneLib.cleanCargoSource ./.;
+          strictDeps = true;
+        };
+        cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
       in
       {
         formatter = pkgs.nixfmt-tree;
 
         devShells.default = pkgs.mkShell {
-          packages = [
-            rust.stable.toolchain
+          packages = with pkgs; [
+            rust-bin.stable.latest.complete
           ];
 
           env = {
@@ -43,54 +48,72 @@
         };
 
         packages = {
-          default =
-            let
-              toolchain = rust.stable.toolchain;
-              naersk' = pkgs.callPackage naersk {
-                cargo = toolchain;
-                rustc = toolchain;
-              };
-            in
-            naersk'.buildPackage {
-              src = ./.;
-            };
+          default = craneLib.buildPackage (
+            craneCommonArgs
+            // {
+              inherit cargoArtifacts;
+            }
+          );
 
-          crossArm64 =
-            let
-              target = "aarch64-unknown-linux-gnu";
-              toolchain =
-                with rust;
-                combine [
-                  stable.cargo
-                  stable.rustc
-                  targets.${target}.stable.rust-std
-                ];
-              naersk' = pkgs.callPackage naersk {
-                cargo = toolchain;
-                rustc = toolchain;
-              };
-              inherit (pkgs.pkgsCross.aarch64-multiplatform.stdenv) cc;
-              linker = "${cc}/bin/${cc.targetPrefix}cc";
-            in
-            naersk'.buildPackage {
-              src = ./.;
-              CARGO_BUILD_TARGET = target;
-              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = linker;
-            };
+          docs = craneLib.cargoDoc (
+            craneCommonArgs
+            // {
+              inherit cargoArtifacts;
+              env.RUSTDOCFLAGS = "--deny warnings";
+            }
+          );
 
-          imageArm64 = pkgs.dockerTools.buildImage {
-            name = appName;
-            tag = "latest";
-            architecture = "arm64";
-            copyToRoot = pkgs.buildEnv {
-              name = "image-root";
-              paths = [ self.packages.${system}.crossArm64 ];
-              pathsToLink = [ "/bin" ];
+          dockerImageArm64 =
+            let
+              crossPkgs = import nixpkgs {
+                crossSystem = "aarch64-linux";
+                localSystem = system;
+                overlays = [ (import rust-overlay) ];
+              };
+              crossCraneLib = (crane.mkLib crossPkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+
+              crateInfo = crossCraneLib.crateNameFromCargoToml craneCommonArgs;
+              appName = crateInfo.pname;
+              appVersion = crateInfo.version;
+
+              # NOTE: if we need to make this more complicated (like add dependencies), see:
+              # https://github.com/ipetkov/crane/blob/master/examples/cross-rust-overlay/flake.nix
+              builtPackage = crossCraneLib.buildPackage craneCommonArgs;
+            in
+            pkgs.dockerTools.buildImage {
+              name = appName;
+              tag = appVersion;
+              architecture = "arm64";
+              copyToRoot = pkgs.buildEnv {
+                name = "image-root";
+                paths = [ builtPackage ];
+                pathsToLink = [ "/bin" ];
+              };
+              config = {
+                Cmd = [ "/bin/${appName}" ];
+              };
             };
-            config = {
-              Cmd = [ "/bin/${appName}" ];
-            };
-          };
+        };
+
+        checks = {
+          format = craneLib.cargoFmt craneCommonArgs;
+
+          lint = craneLib.cargoClippy (
+            craneCommonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+            }
+          );
+
+          test = craneLib.cargoTest (
+            craneCommonArgs
+            // {
+              inherit cargoArtifacts;
+            }
+          );
+
+          docs = self.packages.${system}.docs;
         };
       }
     );
