@@ -1,0 +1,26 @@
+name: Update flake.lock
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 1 * *'
+
+jobs:
+  nix-flake-update:
+    permissions:
+      contents: write
+      id-token: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/update-flake-lock@main
+        id: update-flake-lock
+        with:
+          pr-title: "chore(deps): update nix flake.lock"
+          token: ${{ secrets.GH_TOKEN_FOR_NIX_FLAKE_UPDATES }}
+      - run: gh pr merge --auto --squash ${{ steps.update-flake-lock.outputs.pull-request-number }}
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
