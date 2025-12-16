@@ -1,0 +1,26 @@
+name: Build & Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 10 * * *" # run everyday at 10 AM
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Install direnv
+        run: |
+          curl -sfL https://direnv.net/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Load environment variables
+        run: |
+          direnv allow .
+          direnv export gha > "$GITHUB_ENV"
+
+      - run: nix flake check
