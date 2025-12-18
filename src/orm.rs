@@ -1,3 +1,4 @@
+#[allow(warnings, clippy::all)]
 pub mod short_url {
     use sea_orm::entity::prelude::*;
     use time::OffsetDateTime;

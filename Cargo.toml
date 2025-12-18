@@ -2,6 +2,12 @@
 name = "stoopid-short"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "README.md"
+description = "A microservice that shortens URLs"
+repository = "https://github.com/GregoryConrad/stoopid-short"
+categories = ["web-programming", "asynchronous"]
+keywords = ["short", "url", "server"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -15,3 +21,20 @@ thiserror = "2.0.17"
 time = { version = "0.3.44", features = ["parsing"] }
 tokio = { version = "1.48.0", features = ["rt-multi-thread"] }
 tracing = "0.1.42"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+cargo = "warn"
+complexity = "warn"
+correctness = "warn"
+nursery = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+clone_on_ref_ptr = "warn"
+unwrap_used = "warn"
+multiple_crate_versions = { level = "allow", priority = 1 }

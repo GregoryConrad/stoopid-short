@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = TcpListener::bind(container.read(addr_capsule)).await?;
     info!(addr = %listener.local_addr()?, "Started listening on TCP");
-    axum::serve(listener, app.clone()).await?;
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
