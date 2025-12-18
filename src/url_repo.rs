@@ -18,7 +18,7 @@ pub fn url_repository_capsule(
 pub trait UrlRepository: Send + Sync {
     async fn retrieve_url(&self, id: &str) -> Result<Option<short_url::Model>, DbErr>;
 
-    /// Idempotently saves the [short_url::Model] to the database.
+    /// Idempotently saves the [`short_url::Model`] to the database.
     async fn save_url(&self, url: short_url::Model) -> Result<short_url::Model, DbErr>;
 }
 
