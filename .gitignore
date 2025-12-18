@@ -5,3 +5,6 @@ target
 
 # For direnv
 /.direnv
+
+# For nix
+/result
