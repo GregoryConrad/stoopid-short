@@ -40,6 +40,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             rust-bin.stable.latest.complete
+            devenv
           ];
 
           env = {
