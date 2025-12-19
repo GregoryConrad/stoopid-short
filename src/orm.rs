@@ -10,7 +10,7 @@ pub mod short_url {
         #[sea_orm(primary_key)]
         pub id: String, // TODO set the min/max chars via column type?
         pub long_url: String,
-        pub expiration_time: OffsetDateTime,
+        pub expiration_time_seconds: TimeUnixTimestamp,
     }
 
     impl ActiveModelBehavior for ActiveModel {}

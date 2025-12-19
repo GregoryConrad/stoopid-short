@@ -38,7 +38,7 @@ impl UrlRepository for UrlRepositoryImpl {
         let to_insert = short_url::ActiveModel {
             id: Set(url.id),
             long_url: Set(url.long_url),
-            expiration_time: Set(url.expiration_time),
+            expiration_time_seconds: Set(url.expiration_time_seconds),
         };
         to_insert.insert(&self.db).await
     }

@@ -58,6 +58,8 @@ impl UrlRestService for UrlRestServiceImpl {
         expiration_timestamp: &str,
     ) -> Result<api::ShortenedUrl, PutUrlError> {
         // TODO validate id is in base62, proper len (6-20). make a new capsule for this validation
+        // TODO validate expiration_timestamp is within the next 10 years (or so)
+        // TODO validate long_url is a valid URL
 
         let expiration_time =
             OffsetDateTime::parse(expiration_timestamp, &Rfc3339)?.to_offset(time::UtcOffset::UTC);
@@ -66,7 +68,7 @@ impl UrlRestService for UrlRestServiceImpl {
             .save_url(short_url::Model {
                 id,
                 long_url,
-                expiration_time,
+                expiration_time_seconds: expiration_time.into(),
             })
             .await?
             .try_into()
@@ -123,13 +125,13 @@ impl TryFrom<short_url::Model> for api::ShortenedUrl {
         short_url::Model {
             id,
             long_url,
-            expiration_time,
+            expiration_time_seconds,
         }: short_url::Model,
     ) -> Result<Self, Self::Error> {
         Ok(Self {
             shortened_url_id: id,
             long_url,
-            expiration_timestamp: expiration_time.format(&Rfc3339)?,
+            expiration_timestamp: expiration_time_seconds.format(&Rfc3339)?,
         })
     }
 

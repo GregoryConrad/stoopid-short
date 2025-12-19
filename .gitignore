@@ -3,8 +3,16 @@
 debug
 target
 
-# For direnv
-/.direnv
+# direnv
+.direnv
 
-# For nix
-/result
+# nix
+result
+
+# devenv
+.devenv*
+devenv.lock
+devenv.yaml
+devenv.local.nix
+devenv.local.yaml
+.pre-commit-config.yaml

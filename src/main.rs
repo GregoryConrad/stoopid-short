@@ -18,9 +18,8 @@ use stoopid_short::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // TODO init tracing + more helpful logging throughout
-    // initialize tracing/metrics?
-    // tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt::init();
+
     let container = init_container().await?;
 
     let app = Router::new()
