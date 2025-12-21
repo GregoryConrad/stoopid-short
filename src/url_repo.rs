@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use anyhow::bail;
 use async_trait::async_trait;
 use rearch::CapsuleHandle;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DbConn, EntityTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, DbConn, EntityTrait, TransactionTrait};
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 use tracing::instrument;
@@ -38,6 +39,10 @@ impl ShortId {
 
         Ok(Self { inner: short_id })
     }
+
+    pub(crate) fn into_inner(self) -> String {
+        self.inner
+    }
 }
 #[derive(Debug, Error)]
 pub enum ShortIdValidationError {
@@ -45,11 +50,6 @@ pub enum ShortIdValidationError {
     InvalidLength { min_len: usize, max_len: usize },
     #[error("short ID must only contain alpha-numeric characters; invalid chars: {invalid_chars}")]
     InvalidCharacters { invalid_chars: String },
-}
-impl From<ShortId> for String {
-    fn from(value: ShortId) -> Self {
-        value.inner
-    }
 }
 
 #[derive(Debug)]
@@ -76,6 +76,10 @@ impl ExpirationTime {
             inner: proposed_time,
         })
     }
+
+    pub(crate) const fn into_inner(self) -> OffsetDateTime {
+        self.inner
+    }
 }
 #[derive(Debug, Error)]
 pub enum ExpirationTimeValidationError {
@@ -83,11 +87,6 @@ pub enum ExpirationTimeValidationError {
     TooFarInFuture { max_time: OffsetDateTime },
     #[error("expiration time cannot be in the past")]
     InPast,
-}
-impl From<ExpirationTime> for OffsetDateTime {
-    fn from(value: ExpirationTime) -> Self {
-        value.inner
-    }
 }
 
 pub fn url_repository_capsule(
@@ -105,6 +104,59 @@ pub trait UrlRepository: Send + Sync {
     async fn save_url(&self, url: ShortUrl) -> anyhow::Result<ShortUrl>;
 }
 
+struct UrlRepositoryImpl {
+    db: DbConn,
+}
+
+// NOTE: Our expired items cleanup is async, so we may fetch items that are already expired.
+#[async_trait]
+impl UrlRepository for UrlRepositoryImpl {
+    #[instrument(skip(self))]
+    async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<ShortUrl>> {
+        let opt_url = short_url::Entity::find_by_id(id).one(&self.db).await?;
+        opt_url
+            .filter(|model| *model.expiration_time_seconds >= OffsetDateTime::now_utc())
+            .map(TryInto::try_into)
+            .transpose()
+    }
+
+    #[instrument(skip(self))]
+    async fn save_url(&self, short_url: ShortUrl) -> anyhow::Result<ShortUrl> {
+        let short_id = short_url.short_id.into_inner();
+        let long_url = short_url.url.as_str().to_owned();
+        let expiration_time = short_url.expiration_time.into_inner();
+
+        let inserted_model = self
+            .db
+            .transaction(|txn| {
+                Box::pin(async move {
+                    if let Some(existing) =
+                        short_url::Entity::find_by_id(&short_id).one(txn).await?
+                    {
+                        if *existing.expiration_time_seconds >= OffsetDateTime::now_utc() {
+                            bail!("URL with this short ID already exists and is not expired");
+                        }
+
+                        short_url::Entity::delete_by_id(existing.id)
+                            .exec(txn)
+                            .await?;
+                    }
+
+                    let to_insert = short_url::ActiveModel {
+                        id: Set(short_id),
+                        long_url: Set(long_url),
+                        expiration_time_seconds: Set(expiration_time.into()),
+                    };
+
+                    Ok(to_insert.insert(txn).await?)
+                })
+            })
+            .await?;
+
+        inserted_model.try_into()
+    }
+}
+
 impl TryFrom<short_url::Model> for ShortUrl {
     type Error = anyhow::Error;
 
@@ -120,30 +172,5 @@ impl TryFrom<short_url::Model> for ShortUrl {
             url: Url::parse(&long_url)?,
             expiration_time: ExpirationTime::new(*expiration_time_seconds)?,
         })
-    }
-}
-
-struct UrlRepositoryImpl {
-    db: DbConn,
-}
-
-#[async_trait]
-impl UrlRepository for UrlRepositoryImpl {
-    #[instrument(skip(self))]
-    async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<ShortUrl>> {
-        let opt_url = short_url::Entity::find_by_id(id).one(&self.db).await?;
-        opt_url.map(TryInto::try_into).transpose()
-        // TODO: if expired, None
-    }
-
-    #[instrument(skip(self))]
-    async fn save_url(&self, url: ShortUrl) -> anyhow::Result<ShortUrl> {
-        let to_insert = short_url::ActiveModel {
-            id: Set(url.short_id.inner),
-            long_url: Set(url.url.as_str().to_owned()),
-            expiration_time_seconds: Set(url.expiration_time.inner.into()),
-        };
-        to_insert.insert(&self.db).await?.try_into()
-        // TODO: if error, but expired, delete and re-try (up to 3 times)
     }
 }

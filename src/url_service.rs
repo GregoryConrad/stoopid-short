@@ -165,9 +165,9 @@ impl TryFrom<url_repo::ShortUrl> for ShortenedUrl {
         }: url_repo::ShortUrl,
     ) -> Result<Self, Self::Error> {
         Ok(Self {
-            shortened_url_id: short_id.into(),
+            shortened_url_id: short_id.into_inner(),
             long_url: url.into(),
-            expiration_timestamp: OffsetDateTime::from(expiration_time).format(&Rfc3339)?,
+            expiration_timestamp: expiration_time.into_inner().format(&Rfc3339)?,
         })
     }
 }
