@@ -8,13 +8,13 @@ use axum::{
 use rearch::Container;
 use sea_orm::Database;
 use serde::Serialize;
-use tokio::net::TcpListener;
-use tracing::{error, info, instrument};
-
 use stoopid_short::{
     config::{addr_capsule, db_conn_init_action, db_connection_options_capsule},
     url_service::{self, GetUrlError, PostUrlError, PutUrlError, url_rest_service_capsule},
 };
+use tokio::net::TcpListener;
+use tracing::{error, info, instrument};
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,23 +51,26 @@ async fn get_url(State(container): State<Container>, Path(id): Path<String>) -> 
         .get_url(&id)
         .await
         .map(|url_service::Redirect { url }| Redirect::temporary(&url))
-        .map_err(|error: GetUrlError| match error {
-            GetUrlError::NotFound => (
-                StatusCode::NOT_FOUND,
-                Json(Error {
-                    error: "Not found".to_owned(),
-                }),
-            )
-                .into_response(),
-            GetUrlError::Db(db_err) => {
-                error!(?db_err, "Encountered DbErr");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
+        .map_err(|error: GetUrlError| {
+            let err_uuid = Uuid::new_v4();
+            match error {
+                GetUrlError::NotFound => (
+                    StatusCode::NOT_FOUND,
                     Json(Error {
-                        error: "Internal server error: database".to_owned(),
+                        error: "Not found".to_owned(),
+                        error_id: err_uuid.to_string(),
                     }),
-                )
-                    .into_response()
+                ),
+                GetUrlError::Db(db_err) => {
+                    error!(?db_err, "Encountered database error");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(Error {
+                            error: "Internal server error".to_owned(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
             }
         })
 }
@@ -81,61 +84,55 @@ async fn put_url(
         expiration_timestamp,
     }): Json<url_service::PutUrlPayload>,
 ) -> impl IntoResponse {
-    // TODO handle the following, but modify UrlRestService to do so.
-    // Add something like a new PutUrlError::ExactResourceAlreadyExists,
-    // for when curr copy == one in db
-    // StatusCode::OK // for idempotnent and already exists
-    // StatusCode::CREATED // for newly created
     container
         .read(url_rest_service_capsule)
         .put_url(id, url, &expiration_timestamp)
         .await
-        .map(Json)
-        .map_err(|error: PutUrlError| match error {
-            PutUrlError::TimestampParse(parse_error) => (
-                StatusCode::BAD_REQUEST,
-                Json(Error {
-                    error: format!("Timestamp {expiration_timestamp} is invalid: {parse_error}"),
-                }),
-            ),
-            PutUrlError::InvalidShortId(short_id_error) => (
-                StatusCode::BAD_REQUEST,
-                Json(Error {
-                    error: short_id_error.to_string(),
-                }),
-            ),
-            PutUrlError::InvalidUrl(parse_error) => (
-                StatusCode::BAD_REQUEST,
-                Json(Error {
-                    error: parse_error.to_string(),
-                }),
-            ),
-            PutUrlError::InvalidExpirationTime(expiration_time_error) => (
-                StatusCode::BAD_REQUEST,
-                Json(Error {
-                    error: expiration_time_error.to_string(),
-                }),
-            ),
-            PutUrlError::TimestampFormat(format_error) => {
-                error!(
-                    ?format_error,
-                    "Encountered Format error while formatting timestamp from db"
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(Error {
-                        error: "Internal server error: format".to_owned(),
-                    }),
-                )
-            }
-            PutUrlError::Db(db_err) => {
-                error!(?db_err, "Encountered DbErr");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(Error {
-                        error: "Internal server error: database".to_owned(),
-                    }),
-                )
+        .map(|(short_url, creation_status)| {
+            (
+                match creation_status {
+                    url_service::UrlCreationStatus::NewlyCreated => StatusCode::CREATED,
+                    url_service::UrlCreationStatus::AlreadyExists => StatusCode::OK,
+                },
+                Json(short_url),
+            )
+        })
+        .map_err(|error: PutUrlError| {
+            let err_uuid = Uuid::new_v4();
+            match error {
+                PutUrlError::ShortIdAlreadyTaken => {
+                    info!(?err_uuid, ?error, "Short ID exists under a different entry");
+                    (
+                        StatusCode::CONFLICT,
+                        Json(Error {
+                            error: error.to_string(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
+                PutUrlError::TimestampParse(_)
+                | PutUrlError::InvalidExpirationTime(_)
+                | PutUrlError::InvalidShortId(_)
+                | PutUrlError::InvalidUrl(_) => {
+                    info!(?err_uuid, ?error, "User submitted a bad request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(Error {
+                            error: error.to_string(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
+                PutUrlError::TimestampFormat(_) | PutUrlError::Db(_) => {
+                    error!(?err_uuid, ?error, "Encountered error during a request");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(Error {
+                            error: "Internal server error".to_owned(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
             }
         })
 }
@@ -153,20 +150,25 @@ async fn post_url(
         .post_url(url, expiration_timestamp)
         .await
         .map(Json)
-        .map_err(|error: PostUrlError| match error {
-            PostUrlError::DbError(db_err) => {
-                error!(?db_err, "Encountered DbErr");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(Error {
-                        error: "Internal server error: database".to_owned(),
-                    }),
-                )
+        .map_err(|error: PostUrlError| {
+            let err_uuid = Uuid::new_v4();
+            match error {
+                PostUrlError::Db(_) => {
+                    error!(?err_uuid, ?error, "Encountered error during a request");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(Error {
+                            error: "Internal server error".to_owned(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
             }
         })
 }
 
 #[derive(Serialize)]
 pub struct Error {
-    pub error: String,
+    error: String,
+    error_id: String,
 }
