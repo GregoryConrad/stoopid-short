@@ -8,7 +8,10 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::instrument;
 use url::Url;
 
-use crate::url_repo::{self, UrlRepository, url_repository_capsule};
+use crate::url_repo::{
+    self, ExpirationTime, ExpirationTimeValidationError, SaveUrlError, ShortId,
+    ShortIdValidationError, UrlRepository, url_repository_capsule,
+};
 
 #[derive(Deserialize)]
 pub struct PutUrlPayload {
@@ -72,17 +75,17 @@ pub enum PutUrlError {
     #[error("failed to parse timestamp: {0}")]
     TimestampParse(#[from] time::error::Parse),
     #[error("invalid expiration time: {0}")]
-    InvalidExpirationTime(#[from] url_repo::ExpirationTimeValidationError),
+    InvalidExpirationTime(#[from] ExpirationTimeValidationError),
     #[error("invalid short ID: {0}")]
-    InvalidShortId(#[from] url_repo::ShortIdValidationError),
+    InvalidShortId(#[from] ShortIdValidationError),
     #[error("invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
     #[error("short ID is already taken")]
     ShortIdAlreadyTaken,
     #[error("failed to format timestamp: {0}")]
     TimestampFormat(#[from] time::error::Format),
-    #[error("database error: {0}")]
-    Db(anyhow::Error),
+    #[error("internal/database error: {0}")]
+    Internal(anyhow::Error),
 }
 
 #[derive(Debug, Error)]
@@ -118,18 +121,25 @@ impl UrlRestService for UrlRestServiceImpl {
         let expiration_time =
             OffsetDateTime::parse(expiration_timestamp, &Rfc3339)?.to_offset(time::UtcOffset::UTC);
 
-        self.url_repo
-            .save_url(url_repo::ShortUrl {
-                short_id: url_repo::ShortId::new(id)?,
-                url: Url::parse(&long_url)?,
-                expiration_time: url_repo::ExpirationTime::new(expiration_time)?,
-            })
-            .await
-            .map_err(PutUrlError::Db)?
-            .try_into()
-            .map_err(PutUrlError::TimestampFormat)
-            // TODO inspect DbErr type to see if we need to return AlreadyExists or ShortIdAlreadyTaken
-            .map(|short_url| (short_url, UrlCreationStatus::NewlyCreated))
+        let to_save = url_repo::ShortUrl {
+            short_id: ShortId::new(id)?,
+            url: Url::parse(&long_url)?,
+            expiration_time: ExpirationTime::new(expiration_time)?,
+        };
+
+        match self.url_repo.save_url(to_save.clone()).await {
+            Ok(short_url) => Ok((short_url.try_into()?, UrlCreationStatus::NewlyCreated)),
+            Err(SaveUrlError::ItemAlreadyExists(existing_short_url))
+                if to_save == existing_short_url =>
+            {
+                Ok((
+                    existing_short_url.try_into()?,
+                    UrlCreationStatus::AlreadyExists,
+                ))
+            }
+            Err(SaveUrlError::ItemAlreadyExists(_)) => Err(PutUrlError::ShortIdAlreadyTaken),
+            Err(SaveUrlError::Internal(internal_err)) => Err(PutUrlError::Internal(internal_err)),
+        }
     }
 
     #[instrument(skip(self))]
