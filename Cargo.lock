@@ -168,6 +168,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base62"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1adf9755786e27479693dedd3271691a92b5e242ab139cacb9fb8e7fb5381111"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2297,6 +2303,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base62",
  "mockall",
  "rearch",
  "rearch-effects",
@@ -2307,6 +2314,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

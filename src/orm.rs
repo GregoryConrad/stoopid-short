@@ -1,5 +1,5 @@
 #[allow(warnings, clippy::all)]
-pub mod short_url {
+pub(crate) mod short_url {
     use sea_orm::entity::prelude::*;
     use time::OffsetDateTime;
 
@@ -8,7 +8,7 @@ pub mod short_url {
     #[sea_orm(table_name = "urls")]
     pub struct Model {
         #[sea_orm(primary_key)]
-        pub id: String, // TODO set the min/max chars via column type?
+        pub id: String,
         pub long_url: String,
         pub expiration_time_seconds: TimeUnixTimestamp,
     }
