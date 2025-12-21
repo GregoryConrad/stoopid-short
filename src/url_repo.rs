@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::bail;
+use anyhow::Context;
 use async_trait::async_trait;
 use rearch::CapsuleHandle;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DbConn, EntityTrait, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, DbConn, EntityTrait, TransactionError, TransactionTrait,
+};
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 use tracing::instrument;
@@ -11,14 +13,14 @@ use url::Url;
 
 use crate::{config::db_conn_capsule, orm::short_url};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ShortUrl {
     pub(crate) short_id: ShortId,
     pub(crate) url: Url,
     pub(crate) expiration_time: ExpirationTime,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ShortId {
     inner: String,
 }
@@ -52,7 +54,7 @@ pub enum ShortIdValidationError {
     InvalidCharacters { invalid_chars: String },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExpirationTime {
     inner: OffsetDateTime,
 }
@@ -101,7 +103,15 @@ pub trait UrlRepository: Send + Sync {
     async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<ShortUrl>>;
 
     /// Idempotently saves the [`ShortUrl`] to the database.
-    async fn save_url(&self, url: ShortUrl) -> anyhow::Result<ShortUrl>;
+    async fn save_url(&self, url: ShortUrl) -> Result<ShortUrl, SaveUrlError>;
+}
+
+#[derive(Debug, Error)]
+pub enum SaveUrlError {
+    #[error("an item with the specified id already exists in database and is not expired")]
+    ItemAlreadyExists(ShortUrl),
+    #[error("internal/database error: {0}")]
+    Internal(#[from] anyhow::Error),
 }
 
 struct UrlRepositoryImpl {
@@ -113,7 +123,10 @@ struct UrlRepositoryImpl {
 impl UrlRepository for UrlRepositoryImpl {
     #[instrument(skip(self))]
     async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<ShortUrl>> {
-        let opt_url = short_url::Entity::find_by_id(id).one(&self.db).await?;
+        let opt_url = short_url::Entity::find_by_id(id)
+            .one(&self.db)
+            .await
+            .context("Failed to query for existing item")?;
         opt_url
             .filter(|model| *model.expiration_time_seconds >= OffsetDateTime::now_utc())
             .map(TryInto::try_into)
@@ -121,7 +134,7 @@ impl UrlRepository for UrlRepositoryImpl {
     }
 
     #[instrument(skip(self))]
-    async fn save_url(&self, short_url: ShortUrl) -> anyhow::Result<ShortUrl> {
+    async fn save_url(&self, short_url: ShortUrl) -> Result<ShortUrl, SaveUrlError> {
         let short_id = short_url.short_id.into_inner();
         let long_url = short_url.url.as_str().to_owned();
         let expiration_time = short_url.expiration_time.into_inner();
@@ -130,16 +143,19 @@ impl UrlRepository for UrlRepositoryImpl {
             .db
             .transaction(|txn| {
                 Box::pin(async move {
-                    if let Some(existing) =
-                        short_url::Entity::find_by_id(&short_id).one(txn).await?
+                    if let Some(existing) = short_url::Entity::find_by_id(&short_id)
+                        .one(txn)
+                        .await
+                        .context("Failed to query for an existing item")?
                     {
                         if *existing.expiration_time_seconds >= OffsetDateTime::now_utc() {
-                            bail!("URL with this short ID already exists and is not expired");
+                            return Err(SaveUrlError::ItemAlreadyExists(existing.try_into()?));
                         }
 
                         short_url::Entity::delete_by_id(existing.id)
                             .exec(txn)
-                            .await?;
+                            .await
+                            .context("Failed to delete existing expired item")?;
                     }
 
                     let to_insert = short_url::ActiveModel {
@@ -148,12 +164,21 @@ impl UrlRepository for UrlRepositoryImpl {
                         expiration_time_seconds: Set(expiration_time.into()),
                     };
 
-                    Ok(to_insert.insert(txn).await?)
+                    Ok(to_insert
+                        .insert(txn)
+                        .await
+                        .context("Failed to insert new item")?)
                 })
             })
-            .await?;
+            .await
+            .map_err(|txn_err| match txn_err {
+                TransactionError::Connection(_) => anyhow::Error::from(txn_err)
+                    .context("Failed to execute database transaction due to database connection")
+                    .into(),
+                TransactionError::Transaction(save_url_error) => save_url_error,
+            })?;
 
-        inserted_model.try_into()
+        inserted_model.try_into().map_err(SaveUrlError::from)
     }
 }
 
@@ -168,9 +193,10 @@ impl TryFrom<short_url::Model> for ShortUrl {
         }: short_url::Model,
     ) -> Result<Self, Self::Error> {
         Ok(Self {
-            short_id: ShortId::new(id)?,
-            url: Url::parse(&long_url)?,
-            expiration_time: ExpirationTime::new(*expiration_time_seconds)?,
+            short_id: ShortId::new(id).context("Failed to create ShortId from db model")?,
+            url: Url::parse(&long_url).context("Failed to parse Url from db model")?,
+            expiration_time: ExpirationTime::new(*expiration_time_seconds)
+                .context("Failed to create ExpirationTime from db model")?,
         })
     }
 }

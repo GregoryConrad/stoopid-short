@@ -123,8 +123,8 @@ async fn put_url(
                         }),
                     )
                 }
-                PutUrlError::TimestampFormat(_) | PutUrlError::Db(_) => {
-                    error!(?err_uuid, ?error, "Encountered error during a request");
+                PutUrlError::TimestampFormat(_) | PutUrlError::Internal(_) => {
+                    error!(?err_uuid, ?error, "Encountered an error during a request");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(Error {
