@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rearch::CapsuleHandle;
-use sea_orm::DbErr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -23,7 +22,7 @@ pub struct PostUrlPayload {
     pub expiration_timestamp: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ShortenedUrl {
     pub shortened_url_id: String,
     pub long_url: String,
@@ -50,7 +49,7 @@ pub trait UrlRestService: Send + Sync {
         id: String,
         url: String,
         expiration_timestamp: &str,
-    ) -> Result<ShortenedUrl, PutUrlError>;
+    ) -> Result<(ShortenedUrl, UrlCreationStatus), PutUrlError>;
     async fn post_url(
         &self,
         url: String,
@@ -63,26 +62,33 @@ pub enum GetUrlError {
     Db(anyhow::Error),
 }
 
+pub enum UrlCreationStatus {
+    NewlyCreated,
+    AlreadyExists,
+}
+
 #[derive(Debug, Error)]
 pub enum PutUrlError {
-    #[error("Failed to parse timestamp from request")]
+    #[error("failed to parse timestamp: {0}")]
     TimestampParse(#[from] time::error::Parse),
-    #[error("Failed to format timestamp from database as String")]
-    TimestampFormat(#[from] time::error::Format),
-    #[error("Short ID is invalid")]
-    InvalidShortId(#[from] url_repo::ShortIdValidationError),
-    #[error("URL is invalid")]
-    InvalidUrl(#[from] url::ParseError),
-    #[error("Expiration time is invalid")]
+    #[error("invalid expiration time: {0}")]
     InvalidExpirationTime(#[from] url_repo::ExpirationTimeValidationError),
-    #[error("Database error")]
-    Db(#[from] anyhow::Error),
+    #[error("invalid short ID: {0}")]
+    InvalidShortId(#[from] url_repo::ShortIdValidationError),
+    #[error("invalid URL: {0}")]
+    InvalidUrl(#[from] url::ParseError),
+    #[error("short ID is already taken")]
+    ShortIdAlreadyTaken,
+    #[error("failed to format timestamp: {0}")]
+    TimestampFormat(#[from] time::error::Format),
+    #[error("database error: {0}")]
+    Db(anyhow::Error),
 }
 
 #[derive(Debug, Error)]
 pub enum PostUrlError {
-    #[error("Database error")]
-    DbError(#[from] DbErr),
+    #[error("database error: {0}")]
+    Db(anyhow::Error),
 }
 
 struct UrlRestServiceImpl {
@@ -108,7 +114,7 @@ impl UrlRestService for UrlRestServiceImpl {
         id: String,
         long_url: String,
         expiration_timestamp: &str,
-    ) -> Result<ShortenedUrl, PutUrlError> {
+    ) -> Result<(ShortenedUrl, UrlCreationStatus), PutUrlError> {
         let expiration_time =
             OffsetDateTime::parse(expiration_timestamp, &Rfc3339)?.to_offset(time::UtcOffset::UTC);
 
@@ -118,11 +124,12 @@ impl UrlRestService for UrlRestServiceImpl {
                 url: Url::parse(&long_url)?,
                 expiration_time: url_repo::ExpirationTime::new(expiration_time)?,
             })
-            .await?
+            .await
+            .map_err(PutUrlError::Db)?
             .try_into()
             .map_err(PutUrlError::TimestampFormat)
-
-        // TODO handle the already-created and identical case up here by modifying return type
+            // TODO inspect DbErr type to see if we need to return AlreadyExists or ShortIdAlreadyTaken
+            .map(|short_url| (short_url, UrlCreationStatus::NewlyCreated))
     }
 
     #[instrument(skip(self))]

@@ -41,9 +41,9 @@ impl ShortId {
 }
 #[derive(Debug, Error)]
 pub enum ShortIdValidationError {
-    #[error("Short ID length must be between {min_len} and {max_len}")]
+    #[error("short ID length must be between {min_len} and {max_len}")]
     InvalidLength { min_len: usize, max_len: usize },
-    #[error("Short ID must only contain alpha-numeric characters; invalid chars: {invalid_chars}")]
+    #[error("short ID must only contain alpha-numeric characters; invalid chars: {invalid_chars}")]
     InvalidCharacters { invalid_chars: String },
 }
 impl From<ShortId> for String {
@@ -79,9 +79,9 @@ impl ExpirationTime {
 }
 #[derive(Debug, Error)]
 pub enum ExpirationTimeValidationError {
-    #[error("Expiration time is too far in the future; the current maximum is {max_time}")]
+    #[error("expiration time is too far in the future; the current maximum is {max_time}")]
     TooFarInFuture { max_time: OffsetDateTime },
-    #[error("Expiration time cannot be in the past")]
+    #[error("expiration time cannot be in the past")]
     InPast,
 }
 impl From<ExpirationTime> for OffsetDateTime {
@@ -133,6 +133,7 @@ impl UrlRepository for UrlRepositoryImpl {
     async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<ShortUrl>> {
         let opt_url = short_url::Entity::find_by_id(id).one(&self.db).await?;
         opt_url.map(TryInto::try_into).transpose()
+        // TODO: if expired, None
     }
 
     #[instrument(skip(self))]
@@ -143,5 +144,6 @@ impl UrlRepository for UrlRepositoryImpl {
             expiration_time_seconds: Set(url.expiration_time.inner.into()),
         };
         to_insert.insert(&self.db).await?.try_into()
+        // TODO: if error, but expired, delete and re-try (up to 3 times)
     }
 }

@@ -2,6 +2,8 @@
 {
   cachix.enable = false;
 
+  env.ADDR = "127.0.0.1:8080";
+
   env.DB_URL = "postgres://user:password@localhost:5432/app";
   services.postgres = {
     enable = true;
