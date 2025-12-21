@@ -7,13 +7,13 @@ use axum::{
 };
 use rearch::Container;
 use sea_orm::Database;
+use serde::Serialize;
 use tokio::net::TcpListener;
 use tracing::{error, info, instrument};
 
 use stoopid_short::{
-    api,
     config::{addr_capsule, db_conn_init_action, db_connection_options_capsule},
-    url_service::{GetUrlError, PostUrlError, PutUrlError, url_rest_service_capsule},
+    url_service::{self, GetUrlError, PostUrlError, PutUrlError, url_rest_service_capsule},
 };
 
 #[tokio::main]
@@ -50,11 +50,11 @@ async fn get_url(State(container): State<Container>, Path(id): Path<String>) -> 
         .read(url_rest_service_capsule)
         .get_url(&id)
         .await
-        .map(|api::Redirect { url }| Redirect::temporary(&url))
+        .map(|url_service::Redirect { url }| Redirect::temporary(&url))
         .map_err(|error: GetUrlError| match error {
             GetUrlError::NotFound => (
                 StatusCode::NOT_FOUND,
-                Json(api::Error {
+                Json(Error {
                     error: "Not found".to_owned(),
                 }),
             )
@@ -63,7 +63,7 @@ async fn get_url(State(container): State<Container>, Path(id): Path<String>) -> 
                 error!(?db_err, "Encountered DbErr");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(api::Error {
+                    Json(Error {
                         error: "Internal server error: database".to_owned(),
                     }),
                 )
@@ -76,10 +76,10 @@ async fn get_url(State(container): State<Container>, Path(id): Path<String>) -> 
 async fn put_url(
     State(container): State<Container>,
     Path(id): Path<String>,
-    Json(api::PutUrlPayload {
+    Json(url_service::PutUrlPayload {
         url,
         expiration_timestamp,
-    }): Json<api::PutUrlPayload>,
+    }): Json<url_service::PutUrlPayload>,
 ) -> impl IntoResponse {
     // TODO handle the following, but modify UrlRestService to do so.
     // Add something like a new PutUrlError::ExactResourceAlreadyExists,
@@ -94,8 +94,26 @@ async fn put_url(
         .map_err(|error: PutUrlError| match error {
             PutUrlError::TimestampParse(parse_error) => (
                 StatusCode::BAD_REQUEST,
-                Json(api::Error {
+                Json(Error {
                     error: format!("Timestamp {expiration_timestamp} is invalid: {parse_error}"),
+                }),
+            ),
+            PutUrlError::InvalidShortId(short_id_error) => (
+                StatusCode::BAD_REQUEST,
+                Json(Error {
+                    error: short_id_error.to_string(),
+                }),
+            ),
+            PutUrlError::InvalidUrl(parse_error) => (
+                StatusCode::BAD_REQUEST,
+                Json(Error {
+                    error: parse_error.to_string(),
+                }),
+            ),
+            PutUrlError::InvalidExpirationTime(expiration_time_error) => (
+                StatusCode::BAD_REQUEST,
+                Json(Error {
+                    error: expiration_time_error.to_string(),
                 }),
             ),
             PutUrlError::TimestampFormat(format_error) => {
@@ -105,7 +123,7 @@ async fn put_url(
                 );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(api::Error {
+                    Json(Error {
                         error: "Internal server error: format".to_owned(),
                     }),
                 )
@@ -114,7 +132,7 @@ async fn put_url(
                 error!(?db_err, "Encountered DbErr");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(api::Error {
+                    Json(Error {
                         error: "Internal server error: database".to_owned(),
                     }),
                 )
@@ -125,10 +143,10 @@ async fn put_url(
 #[instrument(skip(container))]
 async fn post_url(
     State(container): State<Container>,
-    Json(api::PostUrlPayload {
+    Json(url_service::PostUrlPayload {
         url,
         expiration_timestamp,
-    }): Json<api::PostUrlPayload>,
+    }): Json<url_service::PostUrlPayload>,
 ) -> impl IntoResponse {
     container
         .read(url_rest_service_capsule)
@@ -140,10 +158,15 @@ async fn post_url(
                 error!(?db_err, "Encountered DbErr");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(api::Error {
+                    Json(Error {
                         error: "Internal server error: database".to_owned(),
                     }),
                 )
             }
         })
+}
+
+#[derive(Serialize)]
+pub struct Error {
+    pub error: String,
 }

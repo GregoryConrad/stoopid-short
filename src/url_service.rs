@@ -3,14 +3,37 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rearch::CapsuleHandle;
 use sea_orm::DbErr;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::instrument;
+use url::Url;
 
-use crate::{
-    api,
-    orm::short_url,
-    url_repo::{UrlRepository, url_repository_capsule},
-};
+use crate::url_repo::{self, UrlRepository, url_repository_capsule};
+
+#[derive(Deserialize)]
+pub struct PutUrlPayload {
+    pub url: String,
+    pub expiration_timestamp: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostUrlPayload {
+    pub url: String,
+    pub expiration_timestamp: String,
+}
+
+#[derive(Serialize)]
+pub struct ShortenedUrl {
+    pub shortened_url_id: String,
+    pub long_url: String,
+    /// Timestamp in ISO-8601 format
+    pub expiration_timestamp: String,
+}
+
+pub struct Redirect {
+    pub url: String,
+}
 
 pub fn url_rest_service_capsule(
     CapsuleHandle { mut get, .. }: CapsuleHandle,
@@ -21,18 +44,45 @@ pub fn url_rest_service_capsule(
 
 #[async_trait]
 pub trait UrlRestService: Send + Sync {
-    async fn get_url(&self, id: &str) -> Result<api::Redirect, GetUrlError>;
+    async fn get_url(&self, id: &str) -> Result<Redirect, GetUrlError>;
     async fn put_url(
         &self,
         id: String,
         url: String,
         expiration_timestamp: &str,
-    ) -> Result<api::ShortenedUrl, PutUrlError>;
+    ) -> Result<ShortenedUrl, PutUrlError>;
     async fn post_url(
         &self,
         url: String,
         expiration_timestamp: String,
-    ) -> Result<api::ShortenedUrl, PostUrlError>;
+    ) -> Result<ShortenedUrl, PostUrlError>;
+}
+
+pub enum GetUrlError {
+    NotFound,
+    Db(anyhow::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum PutUrlError {
+    #[error("Failed to parse timestamp from request")]
+    TimestampParse(#[from] time::error::Parse),
+    #[error("Failed to format timestamp from database as String")]
+    TimestampFormat(#[from] time::error::Format),
+    #[error("Short ID is invalid")]
+    InvalidShortId(#[from] url_repo::ShortIdValidationError),
+    #[error("URL is invalid")]
+    InvalidUrl(#[from] url::ParseError),
+    #[error("Expiration time is invalid")]
+    InvalidExpirationTime(#[from] url_repo::ExpirationTimeValidationError),
+    #[error("Database error")]
+    Db(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum PostUrlError {
+    #[error("Database error")]
+    DbError(#[from] DbErr),
 }
 
 struct UrlRestServiceImpl {
@@ -42,9 +92,11 @@ struct UrlRestServiceImpl {
 #[async_trait]
 impl UrlRestService for UrlRestServiceImpl {
     #[instrument(skip(self))]
-    async fn get_url(&self, id: &str) -> Result<api::Redirect, GetUrlError> {
+    async fn get_url(&self, id: &str) -> Result<Redirect, GetUrlError> {
         match self.url_repo.retrieve_url(id).await {
-            Ok(Some(url)) => Ok(api::Redirect { url: url.long_url }),
+            Ok(Some(url)) => Ok(Redirect {
+                url: url.url.as_str().to_owned(),
+            }),
             Ok(None) => Err(GetUrlError::NotFound),
             Err(err) => Err(GetUrlError::Db(err)),
         }
@@ -56,19 +108,15 @@ impl UrlRestService for UrlRestServiceImpl {
         id: String,
         long_url: String,
         expiration_timestamp: &str,
-    ) -> Result<api::ShortenedUrl, PutUrlError> {
-        // TODO validate id is in base62, proper len (6-20). make a new capsule for this validation
-        // TODO validate expiration_timestamp is within the next 10 years (or so)
-        // TODO validate long_url is a valid URL
-
+    ) -> Result<ShortenedUrl, PutUrlError> {
         let expiration_time =
             OffsetDateTime::parse(expiration_timestamp, &Rfc3339)?.to_offset(time::UtcOffset::UTC);
 
         self.url_repo
-            .save_url(short_url::Model {
-                id,
-                long_url,
-                expiration_time_seconds: expiration_time.into(),
+            .save_url(url_repo::ShortUrl {
+                short_id: url_repo::ShortId::new(id)?,
+                url: Url::parse(&long_url)?,
+                expiration_time: url_repo::ExpirationTime::new(expiration_time)?,
             })
             .await?
             .try_into()
@@ -82,7 +130,7 @@ impl UrlRestService for UrlRestServiceImpl {
         &self,
         url: String,
         expiration_timestamp: String,
-    ) -> Result<api::ShortenedUrl, PostUrlError> {
+    ) -> Result<ShortenedUrl, PostUrlError> {
         // TODO
         // 1. canonicalize URL
         // 2. init salt to 0
@@ -99,41 +147,20 @@ impl UrlRestService for UrlRestServiceImpl {
     }
 }
 
-pub enum GetUrlError {
-    NotFound,
-    Db(DbErr),
-}
+impl TryFrom<url_repo::ShortUrl> for ShortenedUrl {
+    type Error = time::error::Format;
 
-#[derive(Debug, thiserror::Error)]
-pub enum PutUrlError {
-    #[error("Failed to parse timestamp from request")]
-    TimestampParse(#[from] time::error::Parse),
-    #[error("Failed to format timestamp from database as String")]
-    TimestampFormat(#[from] time::error::Format),
-    #[error("Database error")]
-    Db(#[from] DbErr),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PostUrlError {
-    #[error("Database error")]
-    DbError(#[from] DbErr),
-}
-
-impl TryFrom<short_url::Model> for api::ShortenedUrl {
     fn try_from(
-        short_url::Model {
-            id,
-            long_url,
-            expiration_time_seconds,
-        }: short_url::Model,
+        url_repo::ShortUrl {
+            short_id,
+            url,
+            expiration_time,
+        }: url_repo::ShortUrl,
     ) -> Result<Self, Self::Error> {
         Ok(Self {
-            shortened_url_id: id,
-            long_url,
-            expiration_timestamp: expiration_time_seconds.format(&Rfc3339)?,
+            shortened_url_id: short_id.into(),
+            long_url: url.into(),
+            expiration_timestamp: OffsetDateTime::from(expiration_time).format(&Rfc3339)?,
         })
     }
-
-    type Error = time::error::Format;
 }
