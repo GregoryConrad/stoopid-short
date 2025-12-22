@@ -200,3 +200,219 @@ impl TryFrom<short_url::Model> for ShortUrl {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use sea_orm::{MockDatabase, MockExecResult};
+
+    use super::*;
+
+    mod short_id {
+        use super::*;
+
+        #[test]
+        fn test_new_valid() {
+            let valid_id = "valid123";
+            let short_id = ShortId::new(valid_id.to_string()).unwrap();
+            assert_eq!(short_id.inner, valid_id);
+        }
+
+        #[test]
+        fn test_new_too_short() {
+            let short_id = "short";
+            let err = ShortId::new(short_id.to_string()).unwrap_err();
+            assert!(matches!(err, ShortIdValidationError::InvalidLength { .. }));
+        }
+
+        #[test]
+        fn test_new_too_long() {
+            let long_id = "thisidiswaytoolongtobevalid";
+            let err = ShortId::new(long_id.to_string()).unwrap_err();
+            assert!(matches!(err, ShortIdValidationError::InvalidLength { .. }));
+        }
+
+        #[test]
+        fn test_new_invalid_chars() {
+            let invalid_id = "invalid-id!";
+            let err = ShortId::new(invalid_id.to_string()).unwrap_err();
+            assert!(matches!(
+                err,
+                ShortIdValidationError::InvalidCharacters { invalid_chars } if invalid_chars == "-!"
+            ));
+        }
+
+        #[test]
+        fn test_into_inner() {
+            let valid_id = "valid123";
+            let short_id = ShortId::new(valid_id.to_string()).unwrap();
+            assert_eq!(short_id.into_inner(), valid_id);
+        }
+    }
+
+    mod expiration_time {
+        use super::*;
+
+        #[test]
+        fn test_new_valid() {
+            let future_time = OffsetDateTime::now_utc() + Duration::days(1);
+            let expiration_time = ExpirationTime::new(future_time).unwrap();
+            assert_eq!(expiration_time.inner, future_time);
+        }
+
+        #[test]
+        fn test_new_in_past() {
+            let past_time = OffsetDateTime::now_utc() - Duration::days(1);
+            let err = ExpirationTime::new(past_time).unwrap_err();
+            assert!(matches!(err, ExpirationTimeValidationError::InPast));
+        }
+
+        #[test]
+        fn test_new_too_far_in_future() {
+            let far_future_time = OffsetDateTime::now_utc() + Duration::days(11 * 365);
+            let err = ExpirationTime::new(far_future_time).unwrap_err();
+            assert!(matches!(
+                err,
+                ExpirationTimeValidationError::TooFarInFuture { .. }
+            ));
+        }
+
+        #[test]
+        fn test_into_inner() {
+            let future_time = OffsetDateTime::now_utc() + Duration::days(1);
+            let expiration_time = ExpirationTime::new(future_time).unwrap();
+            assert_eq!(expiration_time.into_inner(), future_time);
+        }
+    }
+
+    fn new_model(id: &str, url: &str, expires_in: Duration) -> short_url::Model {
+        let expiration_time = (OffsetDateTime::now_utc() + expires_in)
+            .replace_nanosecond(0)
+            .unwrap();
+        short_url::Model {
+            id: id.to_owned(),
+            long_url: url.to_owned(),
+            expiration_time_seconds: expiration_time.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_url_non_existent() {
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results::<short_url::Model, _, _>([[]])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let result = repo.retrieve_url("nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_url_expired() {
+        let model = new_model("expired", "https://example.com", Duration::seconds(-1));
+
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let result = repo.retrieve_url("expired").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_url_nonexpired() {
+        let model = new_model("nonexpired", "https://example.com", Duration::days(1));
+        let expected: ShortUrl = model.clone().try_into().unwrap();
+
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let result = repo.retrieve_url("nonexpired").await.unwrap();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn test_save_url_newly_created() {
+        let model = new_model("valid123", "https://example.com", Duration::days(1));
+
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([vec![], vec![model.clone()]])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let short_url: ShortUrl = model.try_into().unwrap();
+        let actual = repo.save_url(short_url.clone()).await.unwrap();
+        assert_eq!(actual, short_url);
+    }
+
+    #[tokio::test]
+    async fn test_save_url_conflict_nonexpired() {
+        let model = new_model("valid123", "https://example.com", Duration::days(1));
+
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([[model.clone()]])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let short_url: ShortUrl = model.try_into().unwrap();
+        let result = repo.save_url(short_url.clone()).await;
+        assert!(matches!(
+            result,
+            Err(SaveUrlError::ItemAlreadyExists(existing)) if existing == short_url
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_save_url_conflict_expired() {
+        let conflict = new_model("valid123", "https://gsconrad.com", -Duration::seconds(1));
+        let model = new_model("valid123", "https://example.com", Duration::days(1));
+
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([[conflict], [model.clone()]])
+            .append_exec_results([
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                },
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                },
+            ])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let short_url: ShortUrl = model.try_into().unwrap();
+        let actual = repo.save_url(short_url.clone()).await.unwrap();
+        assert_eq!(actual, short_url);
+    }
+
+    #[test]
+    fn test_try_from_model_to_short_url() {
+        let model = short_url::Model {
+            id: "valid123".to_string(),
+            long_url: "https://example.com".to_string(),
+            expiration_time_seconds: (OffsetDateTime::now_utc() + Duration::days(1)).into(),
+        };
+        let short_url: Result<ShortUrl, _> = model.try_into();
+        assert!(short_url.is_ok());
+    }
+
+    #[test]
+    fn test_try_from_model_to_short_url_invalid_url() {
+        let model = short_url::Model {
+            id: "valid123".to_string(),
+            long_url: "not a valid url".to_string(),
+            expiration_time_seconds: (OffsetDateTime::now_utc() + Duration::days(1)).into(),
+        };
+        let short_url: Result<ShortUrl, _> = model.try_into();
+        assert!(short_url.is_err());
+    }
+}
