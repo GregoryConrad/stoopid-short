@@ -86,7 +86,7 @@ async fn put_url(
 ) -> impl IntoResponse {
     container
         .read(url_rest_service_capsule)
-        .put_url(id, url, &expiration_timestamp)
+        .put_url(id, &url, &expiration_timestamp)
         .await
         .map(|(short_url, creation_status)| {
             (
@@ -147,7 +147,7 @@ async fn post_url(
 ) -> impl IntoResponse {
     container
         .read(url_rest_service_capsule)
-        .post_url(url, expiration_timestamp)
+        .post_url(&url, &expiration_timestamp)
         .await
         .map(Json)
         .map_err(|error: PostUrlError| {
