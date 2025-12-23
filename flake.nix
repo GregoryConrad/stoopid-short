@@ -115,6 +115,28 @@
           );
 
           docs = self.packages.${system}.docs;
+
+          e2e-test =
+            pkgs.runCommand "stoopid-short-e2e-test"
+              {
+                nativeBuildInputs = with pkgs; [
+                  self.packages.${system}.default
+                  postgresql_18
+                  curl
+                  retry
+                ];
+              }
+              ''
+                export FAKETIME_TIMESTAMP_FILE="$(mktemp)"
+                export FAKETIME_NO_CACHE=1
+
+                export DYLD_FORCE_FLAT_NAMESPACE=1
+                export DYLD_INSERT_LIBRARIES="${pkgs.libfaketime}/lib/faketime/libfaketime.1.dylib"
+                export LD_PRELOAD="${pkgs.libfaketime}/lib/libfaketimeMT.so.1"
+
+                bash ${./tests/e2e.sh}
+                touch $out
+              '';
         };
       }
     );
