@@ -16,7 +16,7 @@ axum = "0.8.7"
 base62 = "2.2.3"
 rearch = "0.10.2"
 rearch-effects = "0.6.0"
-sea-orm = { version = "2.0.0-rc.21", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm = { version = "2.0.0-rc.22", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 time = { version = "0.3.44", features = ["parsing"] }
@@ -28,7 +28,7 @@ uuid = { version = "1.19.0", features = ["v4"] }
 
 [dev-dependencies]
 mockall = "0.14.0"
-sea-orm = { version = "2.0.0-rc.21", features = ["mock"] }
+sea-orm = { version = "2.0.0-rc.22", features = ["mock"] }
 
 [lints.rust]
 unsafe_code = "forbid"
