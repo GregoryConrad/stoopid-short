@@ -124,7 +124,7 @@ async fn put_url(
                         }),
                     )
                 }
-                PutUrlError::TimestampFormat(_) | PutUrlError::Internal(_) => {
+                PutUrlError::Internal(_) => {
                     error!(?err_uuid, ?error, "Encountered an error during a request");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -150,12 +150,24 @@ async fn post_url(
         .read(url_rest_service_capsule)
         .post_url(&url, &expiration_timestamp)
         .await
-        .map(Json)
+        .map(|short_url| (StatusCode::OK, Json(short_url)))
         .map_err(|error: PostUrlError| {
             let err_uuid = Uuid::new_v4();
             match error {
-                PostUrlError::Db(_) => {
-                    error!(?err_uuid, ?error, "Encountered error during a request");
+                PostUrlError::TimestampParse(_)
+                | PostUrlError::InvalidExpirationTime(_)
+                | PostUrlError::InvalidUrl(_) => {
+                    info!(?err_uuid, ?error, "User submitted a bad request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(Error {
+                            error: error.to_string(),
+                            error_id: err_uuid.to_string(),
+                        }),
+                    )
+                }
+                PostUrlError::Internal(_) => {
+                    error!(?err_uuid, ?error, "Encountered an error during a request");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(Error {

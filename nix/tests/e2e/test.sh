@@ -51,8 +51,7 @@ check_put() {
 
   echo "PUT $url should return $expected_status for $body"
 
-  local status
-  status="$(curl -sS -o /dev/null -w "%{http_code}" \
+  local status="$(curl -sS -o /dev/null -w "%{http_code}" \
     -X PUT \
     -H "Content-Type: application/json" \
     -d "$body" \
@@ -63,6 +62,37 @@ check_put() {
     echo "expected HTTP $expected_status, got $status"
     return 1
   fi
+}
+
+check_post() {
+  local body="$1"
+  local expected_status=200
+  local url="http://$ADDR/"
+  local response_file="$(mktemp)"
+
+  local status="$(
+    curl -sS -o "$response_file" -w "%{http_code}" \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -d "$body" \
+      "$url" \
+  )"
+
+  if [[ "$status" != "$expected_status" ]]; then
+    echo "POST $url with body $body: expected HTTP $expected_status, got $status"
+    cat "$response_file"
+    return 1
+  fi
+
+  local short_id="$(jq -r '.shortened_url_id' "$response_file")"
+
+  if [[ -z "$short_id" || "$short_id" == "null" ]]; then
+    echo "POST $url with body $body: response missing shortened_url_id"
+    cat "$response_file"
+    return 1
+  fi
+
+  echo "$short_id"
 }
 
 set_faketime() {
@@ -113,5 +143,15 @@ check_put $TEST_ID 201 '{"url":"https://example.com/new-url", "expiration_timest
 check_get $TEST_ID 307 "https://example.com/new-url"
 set_faketime "2002-01-01 00:00:00"
 check_get $TEST_ID 404 ""
+
+POSTED_ID="$(check_post '{"url":"https://example.com/", "expiration_timestamp":"2010-01-01T00:00:00Z"}')"
+POSTED_ID_2="$(check_post '{"url":"https://example.com/", "expiration_timestamp":"2010-01-01T00:00:00Z"}')"
+if [[ "$POSTED_ID" != "$POSTED_ID_2" ]]; then
+  echo "POST requests did not dedupe: $POSTED_ID $POSTED_ID_2"
+  exit 1
+fi
+check_get $POSTED_ID 307 "https://example.com/"
+set_faketime "2020-01-01 00:00:00"
+check_get $POSTED_ID 404 ""
 
 echo "E2E test successful"

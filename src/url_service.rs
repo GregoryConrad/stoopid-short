@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
+use rand::RngCore;
 use rearch::CapsuleHandle;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tracing::instrument;
+use tracing::{error, instrument, warn};
 use url::Url;
 
 use crate::url_repo::{
@@ -86,16 +88,20 @@ pub enum PutUrlError {
     InvalidUrl(#[from] url::ParseError),
     #[error("short ID is already taken")]
     ShortIdAlreadyTaken,
-    #[error("failed to format timestamp: {0}")]
-    TimestampFormat(#[from] time::error::Format),
     #[error("internal/database error: {0}")]
-    Internal(anyhow::Error),
+    Internal(anyhow::Error), // NOTE: no #[from] so we have to be explicit
 }
 
 #[derive(Debug, Error)]
 pub enum PostUrlError {
-    #[error("database error: {0}")]
-    Db(anyhow::Error),
+    #[error("failed to parse timestamp: {0}")]
+    TimestampParse(#[from] time::error::Parse),
+    #[error("invalid expiration time: {0}")]
+    InvalidExpirationTime(#[from] ExpirationTimeValidationError),
+    #[error("invalid URL: {0}")]
+    InvalidUrl(#[from] url::ParseError),
+    #[error("internal/database error: {0}")]
+    Internal(anyhow::Error), // NOTE: no #[from] so we have to be explicit
 }
 
 struct UrlRestServiceImpl {
@@ -136,12 +142,21 @@ impl UrlRestService for UrlRestServiceImpl {
         };
 
         match self.url_repo.save_url(to_save.clone()).await {
-            Ok(short_url) => Ok((short_url.try_into()?, UrlCreationStatus::NewlyCreated)),
+            Ok(short_url) => Ok((
+                short_url
+                    .try_into()
+                    .context("Failed to convert new ShortUrl into external format")
+                    .map_err(PutUrlError::Internal)?,
+                UrlCreationStatus::NewlyCreated,
+            )),
             Err(SaveUrlError::ItemAlreadyExists(existing_short_url))
                 if to_save == existing_short_url =>
             {
                 Ok((
-                    existing_short_url.try_into()?,
+                    existing_short_url
+                        .try_into()
+                        .context("Failed to convert existing ShortUrl into external format")
+                        .map_err(PutUrlError::Internal)?,
                     UrlCreationStatus::AlreadyExists,
                 ))
             }
@@ -156,24 +171,66 @@ impl UrlRestService for UrlRestServiceImpl {
         url: &str,
         expiration_timestamp: &str,
     ) -> Result<ShortenedUrl, PostUrlError> {
-        // TODO
-        // 1. canonicalize URL
-        // 2. init salt to 0
-        // 3. Some SHA variant (or similar)
-        // 4. Take first X bytes
-        // 5. base 62
-        // 6. try PUT call
-        // 7. if fail, randomize salt
-        // 8. retry (go back to step 3) up to 3 times
-        //    on retries, also consider increasing byte length too
-        // 9. return shortened URL info
-        // StatusCode::CREATED // for newly created
-        todo!("TODO: POST with {url} {expiration_timestamp}")
+        const PUT_ATTEMPTS: usize = 3;
+        const BYTES_TO_TAKE: usize = 5;
+
+        // NOTE: start with zeroed salt so we can hopefully dedupe
+        // if the user made the same POST request before
+        let mut salt = [0; blake3::KEY_LEN];
+
+        for _ in 0..PUT_ATTEMPTS {
+            let hash = blake3::Hasher::new_keyed(&salt)
+                .update(url.as_bytes())
+                .update(expiration_timestamp.as_bytes())
+                .finalize();
+
+            let mut base62_buf = [0; 16];
+            base62_buf[..BYTES_TO_TAKE].copy_from_slice(&hash.as_bytes()[..BYTES_TO_TAKE]);
+            let attempt_id = base62::encode(u128::from_le_bytes(base62_buf));
+
+            // NOTE: we defer our url creation logic to a PUT request with the attempt_id
+            match self
+                .put_url(attempt_id.clone(), url, expiration_timestamp)
+                .await
+            {
+                Ok((shortened_url, _)) => return Ok(shortened_url),
+                // NOTE: these are unrecoverable errors; early return to prevent retries
+                Err(PutUrlError::InvalidUrl(inner)) => {
+                    return Err(PostUrlError::InvalidUrl(inner));
+                }
+                Err(PutUrlError::TimestampParse(inner)) => {
+                    return Err(PostUrlError::TimestampParse(inner));
+                }
+                Err(PutUrlError::InvalidExpirationTime(inner)) => {
+                    return Err(PostUrlError::InvalidExpirationTime(inner));
+                }
+                Err(PutUrlError::Internal(err)) => {
+                    error!(?err, "Encountered internal error in delegated PUT call");
+                    return Err(PostUrlError::Internal(
+                        err.context("Encountered internal error in delegated PUT call"),
+                    ));
+                }
+                // NOTE: these are retryable errors; continue on
+                Err(PutUrlError::InvalidShortId(err)) => {
+                    // NOTE: this can be caused by:
+                    // - A bug, in which we are not generating ShortIds of proper length
+                    // - In _very_ rare scenarios when a lot of the trailing hashed bits are 0
+                    warn!(?attempt_id, ?err, "Generated invalid ShortId");
+                }
+                Err(PutUrlError::ShortIdAlreadyTaken) => {
+                    warn!(?attempt_id, "Generated ShortId that was already taken");
+                }
+            }
+
+            rand::rng().fill_bytes(&mut salt);
+        }
+
+        Err(PostUrlError::Internal(anyhow!("Exhausted retry attempts")))
     }
 }
 
 impl TryFrom<url_repo::ShortUrl> for ShortenedUrl {
-    type Error = time::error::Format;
+    type Error = anyhow::Error;
 
     fn try_from(
         url_repo::ShortUrl {
@@ -185,7 +242,10 @@ impl TryFrom<url_repo::ShortUrl> for ShortenedUrl {
         Ok(Self {
             shortened_url_id: short_id.into_inner(),
             long_url: url.into(),
-            expiration_timestamp: expiration_time.into_inner().format(&Rfc3339)?,
+            expiration_timestamp: expiration_time
+                .into_inner()
+                .format(&Rfc3339)
+                .context("Failed to format expiration timestamp")?,
         })
     }
 }
@@ -497,16 +557,128 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "TODO: POST with https://example.com 2025-01-01T00:00:00Z")]
-    async fn test_post_url_todo() {
+    async fn test_post_url_newly_created() {
+        let long_url = "https://example.com/";
+        let expiration_time = OffsetDateTime::now_utc() + Duration::days(1);
+        let expiration_timestamp = expiration_time.format(&Rfc3339).unwrap();
+
+        let mut mock_repo = MockUrlRepository::new();
+        mock_repo
+            .expect_save_url()
+            .withf(move |actual_short_url| {
+                actual_short_url.url.as_str() == long_url
+                    && actual_short_url.expiration_time.clone().into_inner() == expiration_time
+            })
+            .once()
+            .return_once(Ok);
+
+        let service = UrlRestServiceImpl {
+            url_repo: Arc::new(mock_repo),
+        };
+        let result = service
+            .post_url(long_url, &expiration_timestamp)
+            .await
+            .unwrap();
+        assert_eq!(result.long_url, long_url);
+        assert_eq!(result.expiration_timestamp, expiration_timestamp);
+    }
+
+    #[tokio::test]
+    async fn test_post_url_newly_dedupe() {
+        let long_url = "https://example.com/";
+        let expiration_time = OffsetDateTime::now_utc() + Duration::days(1);
+        let expiration_timestamp = expiration_time.format(&Rfc3339).unwrap();
+
+        let mut mock_repo = MockUrlRepository::new();
+        mock_repo
+            .expect_save_url()
+            .withf(move |actual_short_url| {
+                actual_short_url.url.as_str() == long_url
+                    && actual_short_url.expiration_time.clone().into_inner() == expiration_time
+            })
+            .once()
+            .return_once(|short_url| Err(SaveUrlError::ItemAlreadyExists(short_url)));
+
+        let service = UrlRestServiceImpl {
+            url_repo: Arc::new(mock_repo),
+        };
+        let result = service
+            .post_url(long_url, &expiration_timestamp)
+            .await
+            .unwrap();
+        assert_eq!(result.long_url, long_url);
+        assert_eq!(result.expiration_timestamp, expiration_timestamp);
+    }
+
+    #[tokio::test]
+    async fn test_post_url_invalid_long_url() {
         let mock_repo = MockUrlRepository::new();
         let service = UrlRestServiceImpl {
             url_repo: Arc::new(mock_repo),
         };
-        service
-            .post_url("https://example.com", "2025-01-01T00:00:00Z")
+        let result = service
+            .post_url("not a url", "1234-01-01T00:00:00Z")
             .await
+            .unwrap_err();
+        assert!(matches!(result, PostUrlError::InvalidUrl(_)));
+    }
+
+    #[tokio::test]
+    async fn test_post_url_invalid_timestamp_format() {
+        let mock_repo = MockUrlRepository::new();
+        let service = UrlRestServiceImpl {
+            url_repo: Arc::new(mock_repo),
+        };
+        let result = service
+            .post_url("https://example.com", "invalid-timestamp")
+            .await
+            .unwrap_err();
+        assert!(matches!(result, PostUrlError::TimestampParse(_)));
+    }
+
+    #[tokio::test]
+    async fn test_post_url_expiration_time_in_past() {
+        let mock_repo = MockUrlRepository::new();
+        let service = UrlRestServiceImpl {
+            url_repo: Arc::new(mock_repo),
+        };
+        let past_timestamp = (OffsetDateTime::now_utc() - Duration::days(1))
+            .format(&Rfc3339)
             .unwrap();
+        let result = service
+            .post_url("https://example.com", &past_timestamp)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            result,
+            PostUrlError::InvalidExpirationTime(ExpirationTimeValidationError::InPast)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_post_url_db_error() {
+        let long_url = "https://example.com/";
+        let expiration_time = OffsetDateTime::now_utc() + Duration::days(1);
+        let expiration_timestamp = expiration_time.format(&Rfc3339).unwrap();
+
+        let mut mock_repo = MockUrlRepository::new();
+        mock_repo
+            .expect_save_url()
+            .withf(move |actual_short_url| {
+                actual_short_url.url.as_str() == long_url
+                    && actual_short_url.expiration_time.clone().into_inner() == expiration_time
+            })
+            .once()
+            .return_once(|_| Err(SaveUrlError::Internal(anyhow::anyhow!("test failure"))));
+
+        let service = UrlRestServiceImpl {
+            url_repo: Arc::new(mock_repo),
+        };
+        let result = service
+            .post_url(long_url, &expiration_timestamp)
+            .await
+            .unwrap_err();
+        assert!(matches!(result, PostUrlError::Internal(_)));
     }
 
     #[test]

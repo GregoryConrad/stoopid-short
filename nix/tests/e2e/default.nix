@@ -9,6 +9,7 @@ pkgs.runCommand "stoopid-short-e2e-test"
       postgresql_18
       curl
       retry
+      jq
     ];
   }
   ''
