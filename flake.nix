@@ -26,16 +26,37 @@
           inherit system;
           overlays = [ (import rust-overlay) ];
         };
+        linuxArm64Pkgs = import nixpkgs {
+          crossSystem = "aarch64-linux";
+          localSystem = system;
+          overlays = [ (import rust-overlay) ];
+        };
 
         craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
         craneCommonArgs = {
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
         };
-        cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+        craneCommonArgsWithDepCache = craneCommonArgs // {
+          cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+        };
       in
       {
         formatter = pkgs.nixfmt-tree;
+
+        apps = rec {
+          default = server;
+          server = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/stoopid-short-server";
+            meta.description = "The stoopid short web server";
+          };
+          url-gc = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/url-gc";
+            meta.description = "The stoopid short expired URL garbage collection";
+          };
+        };
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
@@ -49,94 +70,55 @@
         };
 
         packages = {
-          default = craneLib.buildPackage (
-            craneCommonArgs
-            // {
-              inherit cargoArtifacts;
-            }
-          );
+          default = pkgs.callPackage ./nix/package.nix {
+            inherit craneLib;
+            craneArgs = craneCommonArgsWithDepCache;
+          };
 
           docs = craneLib.cargoDoc (
-            craneCommonArgs
+            craneCommonArgsWithDepCache
             // {
-              inherit cargoArtifacts;
               env.RUSTDOCFLAGS = "--deny warnings";
             }
           );
 
-          dockerImageArm64 =
-            let
-              crossPkgs = import nixpkgs {
-                crossSystem = "aarch64-linux";
-                localSystem = system;
-                overlays = [ (import rust-overlay) ];
-              };
-              crossCraneLib = (crane.mkLib crossPkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
-
-              crateInfo = crossCraneLib.crateNameFromCargoToml craneCommonArgs;
-              appName = crateInfo.pname;
-              appVersion = crateInfo.version;
-
-              # NOTE: if we need to make this more complicated (like add dependencies), see:
-              # https://github.com/ipetkov/crane/blob/master/examples/cross-rust-overlay/flake.nix
-              builtPackage = crossCraneLib.buildPackage craneCommonArgs;
-            in
-            pkgs.dockerTools.buildImage {
-              name = appName;
-              tag = appVersion;
-              architecture = "arm64";
-              copyToRoot = pkgs.buildEnv {
-                name = "image-root";
-                paths = [ builtPackage ];
-                pathsToLink = [ "/bin" ];
-              };
-              config = {
-                Cmd = [ "/bin/${appName}" ];
-              };
+          ociArm64Server = pkgs.callPackage ./nix/oci-image.nix {
+            architecture = "arm64";
+            binaryName = "stoopid-short-server";
+            appVersion = (craneLib.crateNameFromCargoToml craneCommonArgs).version;
+            package = linuxArm64Pkgs.callPackage ./nix/package.nix {
+              craneLib = (crane.mkLib linuxArm64Pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+              craneArgs = craneCommonArgs;
             };
+          };
+          ociArm64UrlGc = pkgs.callPackage ./nix/oci-image.nix {
+            architecture = "arm64";
+            binaryName = "url-gc";
+            appVersion = (craneLib.crateNameFromCargoToml craneCommonArgs).version;
+            package = linuxArm64Pkgs.callPackage ./nix/package.nix {
+              craneLib = (crane.mkLib linuxArm64Pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+              craneArgs = craneCommonArgs;
+            };
+          };
         };
 
         checks = {
           format = craneLib.cargoFmt craneCommonArgs;
 
           lint = craneLib.cargoClippy (
-            craneCommonArgs
+            craneCommonArgsWithDepCache
             // {
-              inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-            }
-          );
-
-          test = craneLib.cargoTest (
-            craneCommonArgs
-            // {
-              inherit cargoArtifacts;
             }
           );
 
           docs = self.packages.${system}.docs;
 
-          e2e-test =
-            pkgs.runCommand "stoopid-short-e2e-test"
-              {
-                nativeBuildInputs = with pkgs; [
-                  self.packages.${system}.default
-                  postgresql_18
-                  curl
-                  retry
-                ];
-              }
-              ''
-                export FAKETIME_TIMESTAMP_FILE="$(mktemp)"
-                export FAKETIME_NO_CACHE=1
+          test = craneLib.cargoTest craneCommonArgsWithDepCache;
 
-                export DYLD_FORCE_FLAT_NAMESPACE=1
-                export DYLD_INSERT_LIBRARIES="${pkgs.libfaketime}/lib/faketime/libfaketime.1.dylib"
-                export LD_PRELOAD="${pkgs.libfaketime}/lib/libfaketimeMT.so.1"
-
-                bash ${./tests/e2e.sh}
-                touch $out
-              '';
+          e2e-test = pkgs.callPackage ./nix/tests/e2e {
+            package = self.packages.${system}.default;
+          };
         };
       }
     );

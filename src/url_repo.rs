@@ -4,11 +4,12 @@ use anyhow::Context;
 use async_trait::async_trait;
 use rearch::CapsuleHandle;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, DbConn, EntityTrait, TransactionError, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbConn, EntityTrait, QueryFilter,
+    TransactionError, TransactionTrait, value::TimeUnixTimestamp,
 };
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
-use tracing::instrument;
+use tracing::{info, instrument};
 use url::Url;
 
 use crate::{config::db_conn_capsule, orm::short_url};
@@ -104,6 +105,8 @@ pub trait UrlRepository: Send + Sync {
 
     /// Idempotently saves the [`ShortUrl`] to the database.
     async fn save_url(&self, url: ShortUrl) -> Result<ShortUrl, SaveUrlError>;
+
+    async fn delete_expired_urls(&self) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, Error)]
@@ -179,6 +182,18 @@ impl UrlRepository for UrlRepositoryImpl {
             })?;
 
         inserted_model.try_into().map_err(SaveUrlError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_expired_urls(&self) -> anyhow::Result<()> {
+        let curr_time = TimeUnixTimestamp(OffsetDateTime::now_utc());
+        let delete_result = short_url::Entity::delete_many()
+            .filter(short_url::Column::ExpirationTimeSeconds.lt(curr_time))
+            .exec(&self.db)
+            .await
+            .context("Failed to delete expired items from database")?;
+        info!(?delete_result, "Deleted expired items from database");
+        Ok(())
     }
 }
 
@@ -392,6 +407,31 @@ mod tests {
         let short_url: ShortUrl = model.try_into().unwrap();
         let actual = repo.save_url(short_url.clone()).await.unwrap();
         assert_eq!(actual, short_url);
+    }
+
+    #[tokio::test]
+    async fn test_delete_expired_urls_success() {
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 42,
+            }])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let result = repo.delete_expired_urls().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_delete_expired_urls_error() {
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_exec_errors([sea_orm::DbErr::Custom("test error".to_owned())])
+            .into_connection();
+        let repo = UrlRepositoryImpl { db };
+
+        let result = repo.delete_expired_urls().await;
+        assert!(result.is_err());
     }
 
     #[test]

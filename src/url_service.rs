@@ -202,6 +202,7 @@ mod tests {
         impl UrlRepository for UrlRepository {
             async fn retrieve_url(&self, id: &str) -> anyhow::Result<Option<url_repo::ShortUrl>>;
             async fn save_url(&self, url: url_repo::ShortUrl) -> Result<url_repo::ShortUrl, SaveUrlError>;
+            async fn delete_expired_urls(&self) -> anyhow::Result<()>;
         }
     }
 

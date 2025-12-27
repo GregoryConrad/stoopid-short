@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_urls_expiration_time_seconds
 SQL
 
 echo "Starting server"
-stoopid-short &
+stoopid-short-server &
 SERVER_PID=$!
 
 echo "Waiting for server to start on $ADDR"
