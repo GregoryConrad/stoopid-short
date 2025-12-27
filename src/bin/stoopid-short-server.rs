@@ -6,10 +6,9 @@ use axum::{
     routing,
 };
 use rearch::Container;
-use sea_orm::Database;
 use serde::Serialize;
 use stoopid_short::{
-    config::{addr_capsule, db_conn_init_action, db_connection_options_capsule},
+    config,
     url_service::{self, GetUrlError, PostUrlError, PutUrlError, url_rest_service_capsule},
 };
 use tokio::net::TcpListener;
@@ -20,28 +19,17 @@ use uuid::Uuid;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let container = init_container().await?;
+    let container = config::init_container().await?;
 
     let app = Router::new()
         .route("/", routing::post(post_url))
         .route("/{id}", routing::get(get_url).put(put_url))
         .with_state(container.clone());
 
-    let listener = TcpListener::bind(container.read(addr_capsule)).await?;
+    let listener = TcpListener::bind(container.read(config::addr_capsule)).await?;
     info!(addr = %listener.local_addr()?, "Started listening on TCP");
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-#[instrument]
-async fn init_container() -> anyhow::Result<Container> {
-    let container = Container::new();
-
-    let (db_connection_options, set_db_conn) =
-        container.read((db_connection_options_capsule, db_conn_init_action));
-    set_db_conn(Database::connect(db_connection_options).await?);
-
-    Ok(container)
 }
 
 #[instrument(skip(container))]

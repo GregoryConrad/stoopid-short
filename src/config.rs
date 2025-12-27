@@ -1,8 +1,25 @@
 use std::env::{self, VarError};
 
-use rearch::{CData, CapsuleHandle};
-use sea_orm::{ConnectOptions, DbConn};
-use tracing::{info, warn};
+use rearch::{CData, CapsuleHandle, Container};
+use sea_orm::{ConnectOptions, Database, DbConn};
+use tracing::{info, instrument, warn};
+
+/// # Errors
+/// Will return [`Err`] if the connection to the database fails.
+#[instrument]
+pub async fn init_container() -> anyhow::Result<Container> {
+    info!("Initializing container");
+    let container = Container::new();
+
+    let (db_connection_options, set_db_conn) =
+        container.read((db_connection_options_capsule, db_conn_init_action));
+
+    info!(?db_connection_options, "Connecting to database");
+    set_db_conn(Database::connect(db_connection_options).await?);
+
+    info!("Container initialized");
+    Ok(container)
+}
 
 /// # Panics
 /// Panics when environment variable is not set or is invalid.
