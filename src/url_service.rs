@@ -36,6 +36,7 @@ pub struct ShortenedUrl {
 #[derive(Debug)]
 pub struct Redirect {
     pub url: String,
+    pub max_age_seconds: u64,
 }
 
 pub fn url_rest_service_capsule(
@@ -108,6 +109,10 @@ impl UrlRestService for UrlRestServiceImpl {
         match self.url_repo.retrieve_url(id).await {
             Ok(Some(url)) => Ok(Redirect {
                 url: url.url.as_str().to_owned(),
+                max_age_seconds: (url.expiration_time.into_inner() - OffsetDateTime::now_utc())
+                    .whole_seconds()
+                    .try_into()
+                    .unwrap_or(0),
             }),
             Ok(None) => Err(GetUrlError::NotFound),
             Err(err) => Err(GetUrlError::Db(err)),
@@ -233,6 +238,10 @@ mod tests {
         };
         let result = service.get_url(short_id).await.unwrap();
         assert_eq!(result.url, long_url);
+        assert!(
+            // NOTE: slight tolerance is allowed in case of slow tests
+            (86395..=86400).contains(&result.max_age_seconds)
+        );
     }
 
     #[tokio::test]

@@ -38,7 +38,20 @@ async fn get_url(State(container): State<Container>, Path(id): Path<String>) -> 
         .read(url_rest_service_capsule)
         .get_url(&id)
         .await
-        .map(|url_service::Redirect { url }| Redirect::temporary(&url))
+        .map(
+            |url_service::Redirect {
+                 url,
+                 max_age_seconds,
+             }| {
+                (
+                    [(
+                        "Cache-Control",
+                        format!("public, max-age={max_age_seconds}"),
+                    )],
+                    Redirect::temporary(&url),
+                )
+            },
+        )
         .map_err(|error: GetUrlError| {
             let err_uuid = Uuid::new_v4();
             match error {
