@@ -1,0 +1,4 @@
+apiVersion: v2
+name: stoopid-short
+version: 1.0.0
+appVersion: 0.1.0

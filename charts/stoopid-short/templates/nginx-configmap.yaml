@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.fullName }}-nginx-config
+  namespace: {{ .Release.Namespace }}
+data:
+  default.conf: |-
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=mycache:100m max_size=1g inactive=24h;
+
+    server {
+        listen {{ .Values.nginx.port }};
+
+        location / {
+            proxy_pass http://{{ .Values.fullName }}-server:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_cache mycache;
+            proxy_cache_methods GET;
+        }
+    }

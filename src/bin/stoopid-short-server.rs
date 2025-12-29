@@ -23,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", routing::post(post_url))
+        .route("/health", routing::get(health))
         .route("/{id}", routing::get(get_url).put(put_url))
         .with_state(container.clone());
 
@@ -30,6 +31,12 @@ async fn main() -> anyhow::Result<()> {
     info!(addr = %listener.local_addr()?, "Started listening on TCP");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[instrument]
+async fn health() -> impl IntoResponse {
+    info!("Health check requested");
+    (StatusCode::OK, "OK")
 }
 
 #[instrument(skip(container))]
