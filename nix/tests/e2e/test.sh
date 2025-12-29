@@ -127,7 +127,7 @@ stoopid-short-server &
 SERVER_PID=$!
 
 echo "Waiting for server to start on $ADDR"
-retry --until=success --delay=1 --times=5 -- curl -s "$ADDR"
+retry --until=success --delay=1 --times=5 -- curl -s "$ADDR/health"
 
 echo "Running test cases"
 

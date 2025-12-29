@@ -1,0 +1,39 @@
+fullName: stoopid-short
+
+nginx:
+  port: 80
+  nodePort: 30080
+  replicas: 3
+  image: nginx:1.28.1
+
+server:
+  port: 80
+  replicas: 3
+  image: stoopid-short-server
+  imagePullPolicy: Never
+
+urlGc:
+  image: url-gc
+  imagePullPolicy: Never
+  schedule: "0 * * * *" # NOTE: every hour
+
+postgres:
+  instances: 3
+  image: ghcr.io/cloudnative-pg/postgresql:18
+  storage: 1Gi
+  database: urls
+  user: server
+  initdbScripts:
+    "01-create-table.sql": |
+      CREATE TABLE IF NOT EXISTS urls (
+        id TEXT PRIMARY KEY NOT NULL,
+        long_url TEXT NOT NULL,
+        expiration_time_seconds BIGINT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_urls_expiration_time_seconds
+        ON urls (expiration_time_seconds);
+
+      GRANT SELECT, INSERT, UPDATE, DELETE
+        ON urls
+        TO "server";

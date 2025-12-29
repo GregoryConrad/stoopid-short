@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.fullName }}-initdb
+  namespace: {{ .Release.Namespace }}
+data:
+{{- range $filename, $sql := .Values.postgres.initdbScripts }}
+  {{ $filename }}: |-
+{{ $sql | indent 4 }}
+{{- end }}
+

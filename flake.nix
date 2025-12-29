@@ -62,6 +62,8 @@
           packages = with pkgs; [
             rust-bin.stable.latest.complete
             devenv
+            kubernetes-helm
+            helm-ls
           ];
 
           env = {

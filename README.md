@@ -61,3 +61,17 @@ flowchart LR
 
 Yes, I'm aware this is not optimal at all in practice/production;
 I just wanted to orchestrate a non-trivial Kubernetes cluster.
+
+## Kubernetes
+To initialize a cluster:
+```bash
+helm upgrade --install cnpg --namespace cnpg-system --create-namespace charts/cloudnative-pg
+helm upgrade --install stoopid-short --namespace stoopid-short --create-namespace charts/stoopid-short
+```
+
+To ensure reproducibility (especially for Nix), `cloudnative-pg` is pinned in `charts/`.
+To update the current version of `cloudnative-pg`, run:
+```bash
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm pull cnpg/cloudnative-pg --version $THE_VERSION_YOU_WANT --untar --untardir charts/
+```

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.fullName }}-server
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.server.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.fullName }}
+      component: server
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.fullName }}
+        component: server
+    spec:
+      containers:
+        - name: server
+          image: {{ .Values.server.image }}:{{ .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.server.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.server.port }}
+          env:
+            - name: ADDR
+              value: "0.0.0.0:{{ .Values.server.port }}"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.fullName }}-db-app
+                  key: uri
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.server.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.server.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 20

@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.fullName }}-url-gc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.fullName }}
+    component: url-gc
+spec:
+  schedule: "{{ .Values.urlGc.schedule }}"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .Values.fullName }}
+            component: url-gc
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: url-gc
+              image: {{ .Values.urlGc.image }}:{{ .Chart.AppVersion }}
+              imagePullPolicy: {{ .Values.urlGc.imagePullPolicy }}
+              env:
+                - name: DB_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.fullName }}-db-app
+                      key: uri
