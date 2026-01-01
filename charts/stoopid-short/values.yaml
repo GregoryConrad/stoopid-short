@@ -1,16 +1,17 @@
 fullName: stoopid-short
 
 nginx:
-  port: 80
+  image: nginx:latest
+  imagePullPolicy: Always
+  port: 8080
   nodePort: 30080
   replicas: 3
-  image: nginx:1.28.1
 
 server:
-  port: 80
-  replicas: 3
   image: stoopid-short-server
   imagePullPolicy: Never
+  port: 8080
+  replicas: 3
 
 urlGc:
   image: url-gc

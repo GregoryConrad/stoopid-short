@@ -26,11 +26,6 @@
           inherit system;
           overlays = [ (import rust-overlay) ];
         };
-        linuxArm64Pkgs = import nixpkgs {
-          crossSystem = "aarch64-linux";
-          localSystem = system;
-          overlays = [ (import rust-overlay) ];
-        };
 
         craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
         craneCommonArgs = {
@@ -39,6 +34,17 @@
         };
         craneCommonArgsWithDepCache = craneCommonArgs // {
           cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+        };
+
+        arch = builtins.elemAt (pkgs.lib.splitString "-" system) 0;
+        linuxPkgs = import nixpkgs {
+          crossSystem = "${arch}-linux";
+          localSystem = system;
+          overlays = [ (import rust-overlay) ];
+        };
+        linuxPackageForImage = linuxPkgs.callPackage ./nix/package.nix {
+          craneLib = (crane.mkLib linuxPkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+          craneArgs = craneCommonArgs;
         };
       in
       {
@@ -51,7 +57,7 @@
             program = "${self.packages.${system}.default}/bin/stoopid-short-server";
             meta.description = "The stoopid short web server";
           };
-          url-gc = {
+          urlGc = {
             type = "app";
             program = "${self.packages.${system}.default}/bin/url-gc";
             meta.description = "The stoopid short expired URL garbage collection";
@@ -84,23 +90,15 @@
             }
           );
 
-          ociArm64Server = pkgs.callPackage ./nix/oci-image.nix {
-            architecture = "arm64";
+          serverImage = pkgs.callPackage ./nix/container-image.nix {
             binaryName = "stoopid-short-server";
+            package = linuxPackageForImage;
             appVersion = (craneLib.crateNameFromCargoToml craneCommonArgs).version;
-            package = linuxArm64Pkgs.callPackage ./nix/package.nix {
-              craneLib = (crane.mkLib linuxArm64Pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
-              craneArgs = craneCommonArgs;
-            };
           };
-          ociArm64UrlGc = pkgs.callPackage ./nix/oci-image.nix {
-            architecture = "arm64";
+          urlGcImage = pkgs.callPackage ./nix/container-image.nix {
             binaryName = "url-gc";
+            package = linuxPackageForImage;
             appVersion = (craneLib.crateNameFromCargoToml craneCommonArgs).version;
-            package = linuxArm64Pkgs.callPackage ./nix/package.nix {
-              craneLib = (crane.mkLib linuxArm64Pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
-              craneArgs = craneCommonArgs;
-            };
           };
         };
 
@@ -118,8 +116,13 @@
 
           test = craneLib.cargoTest craneCommonArgsWithDepCache;
 
-          e2e-test = pkgs.callPackage ./nix/tests/e2e {
+          e2e = pkgs.callPackage ./nix/tests/e2e {
             package = self.packages.${system}.default;
+          };
+
+          k8s = pkgs.callPackage ./nix/tests/k8s {
+            serverImage = self.packages.${system}.serverImage;
+            urlGcImage = self.packages.${system}.urlGcImage;
           };
         };
       }
