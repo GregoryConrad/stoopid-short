@@ -33,7 +33,6 @@ testers.runNixOSTest {
         ];
 
         images = [
-          config.services.k3s.package.airgap-images
           serverImage
           urlGcImage
         ]
