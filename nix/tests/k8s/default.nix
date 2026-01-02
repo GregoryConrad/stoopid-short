@@ -46,7 +46,7 @@ testers.runNixOSTest {
     {
       services.k3s = {
         clusterInit = true;
-        nodeIP = (pkgs.lib.head nodes.node1.networking.interfaces.eth1.ipv4.addresses).address;
+        nodeIP = nodes.node1.networking.primaryIPAddress;
         autoDeployCharts = {
           cloudnative-pg = {
             name = "cloudnative-pg";
@@ -74,34 +74,14 @@ testers.runNixOSTest {
           };
         };
       };
-      networking = {
-        useDHCP = false;
-        defaultGateway = "192.168.1.1";
-        interfaces.eth1.ipv4.addresses = pkgs.lib.mkForce [
-          {
-            address = "192.168.1.1";
-            prefixLength = 24;
-          }
-        ];
-      };
     };
 
   nodes.node2 =
     { pkgs, nodes, ... }:
     {
       services.k3s = {
-        nodeIP = (pkgs.lib.head nodes.node2.networking.interfaces.eth1.ipv4.addresses).address;
+        nodeIP = nodes.node2.networking.primaryIPAddress;
         serverAddr = "https://${nodes.node1.services.k3s.nodeIP}:6443";
-      };
-      networking = {
-        useDHCP = false;
-        defaultGateway = "192.168.1.2";
-        interfaces.eth1.ipv4.addresses = pkgs.lib.mkForce [
-          {
-            address = "192.168.1.2";
-            prefixLength = 24;
-          }
-        ];
       };
     };
 
@@ -109,13 +89,12 @@ testers.runNixOSTest {
 
   testScript = ''
     port = 30080
-    test_node = node1 # TODO node2 if we get HA working
+    test_node = node2
 
     import json
     from datetime import datetime, timedelta
 
     node1.start()
-    node1.wait_until_succeeds('k3s kubectl get nodes')
     node2.start()
     test_node.wait_until_succeeds(f'curl -sf localhost:{port}/health')
 
