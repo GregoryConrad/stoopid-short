@@ -87,20 +87,6 @@ in
       finalImageTag = "latest";
       arch = "amd64";
     })
-    (pkgs.dockerTools.pullImage {
-      imageName = "rancher/mirrored-library-busybox";
-      imageDigest = "sha256:8a45424ddf949bbe9bb3231b05f9032a45da5cd036eb4867b511b00734756d6f";
-      hash = "sha256-oOghn/A6kwWhpXRaAjnW/ZhIlyCa0QqWJTCgm5sUcoQ=";
-      finalImageTag = "1.36.1";
-      arch = "amd64";
-    })
-    (pkgs.dockerTools.pullImage {
-      imageName = "rancher/klipper-helm";
-      imageDigest = "sha256:251a6a3983934f1026c34f4337fc5a87e093a142438c7d16f7b31c179162176e";
-      hash = "sha256-73LrDUTjjlIWj3CAPMY184Rmb/8V/HzlbejEa5b9HKw=";
-      finalImageTag = "v0.9.10-build20251111";
-      arch = "amd64";
-    })
   ];
 }
 ."${arch}"
