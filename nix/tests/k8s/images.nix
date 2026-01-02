@@ -101,13 +101,6 @@ in
       finalImageTag = "3.6";
       arch = "amd64";
     })
-    (pkgs.dockerTools.pullImage {
-      imageName = "rancher/klipper-helm";
-      imageDigest = "sha256:251a6a3983934f1026c34f4337fc5a87e093a142438c7d16f7b31c179162176e";
-      hash = "sha256-73LrDUTjjlIWj3CAPMY184Rmb/8V/HzlbejEa5b9HKw=";
-      finalImageTag = "v0.9.10-build20251111";
-      arch = "amd64";
-    })
   ];
 }
 ."${arch}"
