@@ -45,11 +45,8 @@ testers.runNixOSTest {
     { pkgs, nodes, ... }:
     {
       services.k3s = {
-        # TODO can we get multi-node working via static IP + disable DHCP?
-        # https://github.com/NixOS/nixpkgs/blob/b69a84134c31b1025a032d080d7b36a91180a4c6/nixos/tests/k3s/etcd.nix
-        # clusterInit = true;
-        # nodeIP = nodes.node1.networking.primaryIPAddress;
-        # nodeIP = (pkgs.lib.head nodes.node1.networking.interfaces.eth1.ipv4.addresses).address;
+        clusterInit = true;
+        nodeIP = nodes.node1.networking.primaryIPAddress;
         autoDeployCharts = {
           cloudnative-pg = {
             name = "cloudnative-pg";
@@ -79,28 +76,26 @@ testers.runNixOSTest {
       };
     };
 
-  # nodes.node2 =
-  #   { pkgs, nodes, ... }:
-  #   {
-  #     services.k3s = {
-  #       # TODO can we get rid of nodeIP?
-  #       nodeIP = (pkgs.lib.head nodes.node2.networking.interfaces.eth1.ipv4.addresses).address;
-  #       nodeIP = nodes.node2.networking.primaryIPAddress;
-  #       serverAddr = "http://${nodes.node1.services.k3s.nodeIP}:6443";
-  #     };
-  #   };
+  nodes.node2 =
+    { pkgs, nodes, ... }:
+    {
+      services.k3s = {
+        nodeIP = nodes.node2.networking.primaryIPAddress;
+        serverAddr = "https://${nodes.node1.services.k3s.nodeIP}:6443";
+      };
+    };
 
   # TODO dump k3s info with a easy tag every 30 seconds of all running pods + their description/logs
 
   testScript = ''
     port = 30080
-    test_node = node1 # TODO node2 if we get HA working
+    test_node = node2
 
     import json
     from datetime import datetime, timedelta
 
     node1.start()
-    # node2.start() TODO
+    node2.start()
     test_node.wait_until_succeeds(f'curl -sf localhost:{port}/health')
 
     expected_url = 'https://example.com/'
