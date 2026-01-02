@@ -95,13 +95,6 @@ in
       arch = "amd64";
     })
     (pkgs.dockerTools.pullImage {
-      imageName = "rancher/mirrored-pause";
-      imageDigest = "sha256:74c4244427b7312c5b901fe0f67cbc53683d06f4f24c6faee65d4182bf0fa893";
-      hash = "sha256-IbuPXoalV8gKCZGMteRzkeG65o4GCu3G+UX+lVLAo2I=";
-      finalImageTag = "3.6";
-      arch = "amd64";
-    })
-    (pkgs.dockerTools.pullImage {
       imageName = "rancher/klipper-helm";
       imageDigest = "sha256:251a6a3983934f1026c34f4337fc5a87e093a142438c7d16f7b31c179162176e";
       hash = "sha256-73LrDUTjjlIWj3CAPMY184Rmb/8V/HzlbejEa5b9HKw=";
