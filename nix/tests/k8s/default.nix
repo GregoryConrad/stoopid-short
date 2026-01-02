@@ -85,8 +85,6 @@ testers.runNixOSTest {
       };
     };
 
-  # TODO dump k3s info with a easy tag every 30 seconds of all running pods + their description/logs
-
   testScript = ''
     port = 30080
     test_node = node2
