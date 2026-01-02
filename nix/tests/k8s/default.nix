@@ -45,11 +45,8 @@ testers.runNixOSTest {
     { pkgs, nodes, ... }:
     {
       services.k3s = {
-        # TODO can we get multi-node working via static IP + disable DHCP?
-        # https://github.com/NixOS/nixpkgs/blob/b69a84134c31b1025a032d080d7b36a91180a4c6/nixos/tests/k3s/etcd.nix
-        # clusterInit = true;
-        # nodeIP = nodes.node1.networking.primaryIPAddress;
-        # nodeIP = (pkgs.lib.head nodes.node1.networking.interfaces.eth1.ipv4.addresses).address;
+        clusterInit = true;
+        nodeIP = (pkgs.lib.head nodes.node1.networking.interfaces.eth1.ipv4.addresses).address;
         autoDeployCharts = {
           cloudnative-pg = {
             name = "cloudnative-pg";
@@ -77,18 +74,36 @@ testers.runNixOSTest {
           };
         };
       };
+      networking = {
+        useDHCP = false;
+        defaultGateway = "192.168.1.1";
+        interfaces.eth1.ipv4.addresses = pkgs.lib.mkForce [
+          {
+            address = "192.168.1.1";
+            prefixLength = 24;
+          }
+        ];
+      };
     };
 
-  # nodes.node2 =
-  #   { pkgs, nodes, ... }:
-  #   {
-  #     services.k3s = {
-  #       # TODO can we get rid of nodeIP?
-  #       nodeIP = (pkgs.lib.head nodes.node2.networking.interfaces.eth1.ipv4.addresses).address;
-  #       nodeIP = nodes.node2.networking.primaryIPAddress;
-  #       serverAddr = "http://${nodes.node1.services.k3s.nodeIP}:6443";
-  #     };
-  #   };
+  nodes.node2 =
+    { pkgs, nodes, ... }:
+    {
+      services.k3s = {
+        nodeIP = (pkgs.lib.head nodes.node2.networking.interfaces.eth1.ipv4.addresses).address;
+        serverAddr = "https://${nodes.node1.services.k3s.nodeIP}:6443";
+      };
+      networking = {
+        useDHCP = false;
+        defaultGateway = "192.168.1.2";
+        interfaces.eth1.ipv4.addresses = pkgs.lib.mkForce [
+          {
+            address = "192.168.1.2";
+            prefixLength = 24;
+          }
+        ];
+      };
+    };
 
   # TODO dump k3s info with a easy tag every 30 seconds of all running pods + their description/logs
 
@@ -100,7 +115,8 @@ testers.runNixOSTest {
     from datetime import datetime, timedelta
 
     node1.start()
-    # node2.start() TODO
+    node1.wait_until_succeeds('k3s kubectl get nodes')
+    node2.start()
     test_node.wait_until_succeeds(f'curl -sf localhost:{port}/health')
 
     expected_url = 'https://example.com/'
