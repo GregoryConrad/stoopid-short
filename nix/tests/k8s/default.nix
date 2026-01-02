@@ -9,8 +9,8 @@ testers.runNixOSTest {
   defaults =
     { pkgs, config, ... }:
     {
-      virtualisation.diskSize = 5 * 1024;
-      virtualisation.memorySize = 5 * 1024;
+      virtualisation.diskSize = 4 * 1024;
+      virtualisation.memorySize = 4 * 1024;
 
       networking.firewall.allowedTCPPorts = [
         6443 # k3s: required so that pods can reach the API server (running on port 6443 by default)
