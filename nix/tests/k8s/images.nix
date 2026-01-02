@@ -88,13 +88,6 @@ in
       arch = "amd64";
     })
     (pkgs.dockerTools.pullImage {
-      imageName = "rancher/mirrored-library-busybox";
-      imageDigest = "sha256:8a45424ddf949bbe9bb3231b05f9032a45da5cd036eb4867b511b00734756d6f";
-      hash = "sha256-oOghn/A6kwWhpXRaAjnW/ZhIlyCa0QqWJTCgm5sUcoQ=";
-      finalImageTag = "1.36.1";
-      arch = "amd64";
-    })
-    (pkgs.dockerTools.pullImage {
       imageName = "rancher/mirrored-pause";
       imageDigest = "sha256:74c4244427b7312c5b901fe0f67cbc53683d06f4f24c6faee65d4182bf0fa893";
       hash = "sha256-IbuPXoalV8gKCZGMteRzkeG65o4GCu3G+UX+lVLAo2I=";
