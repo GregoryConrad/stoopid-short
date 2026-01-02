@@ -103,7 +103,7 @@ testers.runNixOSTest {
     # node2.start() TODO
     test_node.wait_until_succeeds(f'curl -sf localhost:{port}/health')
 
-    expected_url = 'https://example.com/'
+    expected_url = 'https://example.com'
     expiration_time = datetime.now() + timedelta(days=1)
     expiration_timestamp = f'{expiration_time.isoformat()}Z'
 
