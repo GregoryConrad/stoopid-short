@@ -20,7 +20,7 @@ rearch = "0.10.2"
 rearch-effects = "0.6.0"
 sea-orm = { version = "2.0.0-rc.30", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 time = { version = "0.3.45", features = ["parsing"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
 tracing = "0.1.42"
