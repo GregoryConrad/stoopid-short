@@ -18,7 +18,7 @@ blake3 = "1.8.3"
 rand = "0.9.2"
 rearch = "0.10.2"
 rearch-effects = "0.6.0"
-sea-orm = { version = "2.0.0-rc.31", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm = { version = "2.0.0-rc.32", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 time = { version = "0.3.47", features = ["parsing"] }
@@ -30,7 +30,7 @@ uuid = { version = "1.20.0", features = ["v4"] }
 
 [dev-dependencies]
 mockall = "0.14.0"
-sea-orm = { version = "2.0.0-rc.31", features = ["mock"] }
+sea-orm = { version = "2.0.0-rc.32", features = ["mock"] }
 
 [lints.rust]
 unsafe_code = "forbid"
