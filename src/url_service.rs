@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
-use rand::RngCore;
+use rand::{Rng, rngs::ThreadRng};
 use rearch::CapsuleHandle;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -222,7 +222,7 @@ impl UrlRestService for UrlRestServiceImpl {
                 }
             }
 
-            rand::rng().fill_bytes(&mut salt);
+            ThreadRng::default().fill_bytes(&mut salt);
         }
 
         Err(PostUrlError::Internal(anyhow!("Exhausted retry attempts")))
