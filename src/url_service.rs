@@ -150,10 +150,10 @@ impl UrlRestService for UrlRestServiceImpl {
                 UrlCreationStatus::NewlyCreated,
             )),
             Err(SaveUrlError::ItemAlreadyExists(existing_short_url))
-                if to_save == existing_short_url =>
+                if to_save == *existing_short_url =>
             {
                 Ok((
-                    existing_short_url
+                    (*existing_short_url)
                         .try_into()
                         .context("Failed to convert existing ShortUrl into external format")
                         .map_err(PutUrlError::Internal)?,
@@ -396,7 +396,11 @@ mod tests {
             .once()
             .return_once({
                 let existing_short_url = existing_short_url.clone();
-                move |_| Err(SaveUrlError::ItemAlreadyExists(existing_short_url))
+                move |_| {
+                    Err(SaveUrlError::ItemAlreadyExists(Box::new(
+                        existing_short_url,
+                    )))
+                }
             });
 
         let service = UrlRestServiceImpl {
@@ -439,7 +443,11 @@ mod tests {
             .once()
             .return_once({
                 let conflicting_short_url = conflicting_short_url.clone();
-                move |_| Err(SaveUrlError::ItemAlreadyExists(conflicting_short_url))
+                move |_| {
+                    Err(SaveUrlError::ItemAlreadyExists(Box::new(
+                        conflicting_short_url,
+                    )))
+                }
             });
 
         let service = UrlRestServiceImpl {
@@ -597,7 +605,7 @@ mod tests {
                     && actual_short_url.expiration_time.clone().into_inner() == expiration_time
             })
             .once()
-            .return_once(|short_url| Err(SaveUrlError::ItemAlreadyExists(short_url)));
+            .return_once(|short_url| Err(SaveUrlError::ItemAlreadyExists(Box::new(short_url))));
 
         let service = UrlRestServiceImpl {
             url_repo: Arc::new(mock_repo),

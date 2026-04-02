@@ -112,7 +112,7 @@ pub trait UrlRepository: Send + Sync {
 #[derive(Debug, Error)]
 pub enum SaveUrlError {
     #[error("an item with the specified id already exists in database and is not expired")]
-    ItemAlreadyExists(ShortUrl),
+    ItemAlreadyExists(Box<ShortUrl>),
     #[error("internal/database error: {0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -152,7 +152,11 @@ impl UrlRepository for UrlRepositoryImpl {
                         .context("Failed to query for an existing item")?
                     {
                         if *existing.expiration_time_seconds >= OffsetDateTime::now_utc() {
-                            return Err(SaveUrlError::ItemAlreadyExists(existing.try_into()?));
+                            return Err(SaveUrlError::ItemAlreadyExists(Box::new(
+                                existing
+                                    .try_into()
+                                    .context("Failed to convert existing model to ShortUrl")?,
+                            )));
                         }
 
                         short_url::Entity::delete_by_id(existing.id)
@@ -380,7 +384,7 @@ mod tests {
         let result = repo.save_url(short_url.clone()).await;
         assert!(matches!(
             result,
-            Err(SaveUrlError::ItemAlreadyExists(existing)) if existing == short_url
+            Err(SaveUrlError::ItemAlreadyExists(existing)) if *existing == short_url
         ));
     }
 
